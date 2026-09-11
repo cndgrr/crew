@@ -90,6 +90,7 @@ any of them does not cover that leg's contract.
 | `--no-hygiene-drill` | the worktree `hygiene` leg |
 | `--no-breaker-drill` | the terminal-failure `breaker` leg |
 | `--no-notify-drill` | the operator-notification `notify` leg |
+| `--no-fleet-drill` | the fleet-lifecycle `fleet` leg |
 | `--keep` | teardown: boxes and sandboxes are retained deliberately |
 
 ## Phase 0 — acquire the exact tree, then run static checks
@@ -670,6 +671,7 @@ waiting for:
 | `resume`, `attention` | the builder role was not in `--roles`, or its phase 2 never ran | a builder box that reaches phase 2 |
 | `attention-audit` | the triage role was not in `--roles`, or its phase 2 never ran | a triage box that reaches phase 2 |
 | `installer`, `config`, `app` | no role install produced a box to borrow | a role drill that reaches an installed box |
+| `fleet` | fewer than two roles reached a box, or nothing was refused, so a reading could not be taken | a round drilling at least two roles; the busy-box and refusal readings are INCOMPLETE, never passing, when they could not be taken |
 
 The record, not this table, is what a release is evidenced on: a round writes
 its own reasons, and `drills/<version>.md` keeps them. If a leg has never
