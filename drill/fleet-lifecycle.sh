@@ -101,7 +101,7 @@ fleet_cut_outcome() { # NAME
       # fleet's RESET_LABEL and is not spelled here: a fleet that renames it
       # must not silently start reading every cut as `unknown`.
       *": "*" cut at crew@"*)
-        [ "$outcome" = unknown ] && outcome=cut ;;
+        [ "$outcome" = unknown ] && outcome='cut' ;;
     esac
   done
   printf '%s\n' "$outcome"
@@ -292,7 +292,7 @@ fleet_counts_agree() { # VERB SUMMARY
       # dropped or invented row and nothing else.
       restore:wrong-label) outcome=restored ;;
       # A box the verb waited for is also one it stopped.
-      down:waited) table[stopped]=$(( ${table[stopped]} + 1 )) ;;
+      down:waited) table[stopped]=$(( table[stopped] + 1 )) ;;
     esac
     [ -n "${table[$outcome]+x}" ] || { printf 'disagree:unknown-row=%s/%s\n' "$name" "$outcome"; return 0; }
     table["$outcome"]=$(( ${table[$outcome]} + 1 ))
