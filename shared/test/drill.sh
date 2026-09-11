@@ -46,6 +46,12 @@ cp "$ROOT/drill/rehearsal-all.sh" "$ROOT/drill/rehearsal-notify.sh" \
   "$ROOT/drill/rehearsal-breaker.sh" "$ROOT/drill/rehearsal-safety.sh" \
   "$HARNESS/"
 cp "$ROOT/drill/rehearsal-report.sh" "$HARNESS/"
+# The orchestrator sources this one for fleet_worst_verdict. Without it in the
+# harness every fleet row would be produced by an UNDEFINED function, which
+# under `set -uo pipefail` is a stderr line and an empty verdict — a leg that
+# graded itself as "reached no case" for a reason that exists only in the
+# fixture.
+cp "$ROOT/drill/fleet-lifecycle.sh" "$HARNESS/"
 cat >"$HARNESS/rehearsal.sh" <<'ROLE'
 #!/usr/bin/env bash
 role="" remote="" ref="" tree="" source_ref=""
@@ -1957,5 +1963,376 @@ ATT_LABEL_CONF=""
 t drill-attention-census-no-label-refuses 1 \
   "$(grep -c '^TAKE-RC=1$' <<<"$(att_drive take)" || true)"
 ATT_LABEL_CONF="attention"
+
+
+# --- #656: the fleet-lifecycle leg's classifiers, and its row ---------------
+# The leg itself needs a box host, real boxes and an operator fleet definition.
+# What is testable here is the part that decides what a round SAW, and that is
+# deliberately all of it: every verdict the leg reaches comes out of
+# drill/fleet-lifecycle.sh, so these fixtures EXECUTE the classifiers against
+# the verbs' real line shapes rather than pinning the leg's source text — the
+# drill/agreement.sh precedent, which is what made #494's armed/skewed verdict
+# testable without a host.
+# shellcheck source=drill/fleet-lifecycle.sh
+. "$ROOT/drill/fleet-lifecycle.sh"
+
+# Case 1: a roster whose boxes report mixed states. Three boxes, three
+# different outcomes, in the shapes cli/crew actually prints.
+FLEET_RESTART_MIXED='restart plan (72h force-after): crew-drill-triage crew-drill-builder crew-drill-reviewer
+  crew-drill-triage: restarted; /tmp filesystem free 1048576 → 1310720 KiB (delta +262144 KiB)
+  crew-drill-builder: SKIPPED busy — duty lock held for 4m 10s
+  restart FAILED on crew-drill-reviewer — start command failed
+
+restart: 1 restarted, 1 skipped-busy, 1 failed
+  skipped: crew-drill-builder
+  failed: crew-drill-reviewer'
+t fleet-restart-names-the-cycled-box cycled \
+  "$(fleet_restart_outcome crew-drill-triage <<<"$FLEET_RESTART_MIXED")"
+t fleet-restart-names-the-busy-box skipped-busy \
+  "$(fleet_restart_outcome crew-drill-builder <<<"$FLEET_RESTART_MIXED")"
+t fleet-restart-names-the-failed-box failed \
+  "$(fleet_restart_outcome crew-drill-reviewer <<<"$FLEET_RESTART_MIXED")"
+# A box the verb never mentioned is `unknown` and never a pass. This is the
+# reading that stops a roster row silently dropping out of the table.
+t fleet-restart-unmentioned-box-is-unknown unknown \
+  "$(fleet_restart_outcome crew-drill-absent <<<"$FLEET_RESTART_MIXED")"
+# A box that was already stopped is still a cycle: `crew restart` documents
+# that state, and grading it `unknown` would red a round for a success.
+t fleet-restart-already-stopped-box-is-a-cycle cycled \
+  "$(fleet_restart_outcome crew-drill-triage <<<'  crew-drill-triage: already stopped; starting
+  crew-drill-triage: started from stopped; /tmp filesystem free 900000 KiB (no pre-stop reading)')"
+# A longer name sharing a prefix is a different box. Without the literal `: `
+# these two would fold into one row and the table would name an outcome the
+# verb gave to somebody else.
+t fleet-restart-prefix-name-does-not-fold unknown \
+  "$(fleet_restart_outcome crew-drill-build <<<"$FLEET_RESTART_MIXED")"
+
+# ...and the counts match the rows. The table IS the evidence: #642 and #652
+# each say a fleet-level summary line alone does not satisfy them.
+FLEET_RESTART_ROWS='crew-drill-triage cycled
+crew-drill-builder skipped-busy
+crew-drill-reviewer failed'
+t fleet-restart-table-agrees-with-the-summary agree \
+  "$(fleet_counts_agree restart 'restart: 1 restarted, 1 skipped-busy, 1 failed' \
+    <<<"$FLEET_RESTART_ROWS")"
+# A dropped row is the degenerate case of a summary-only reading, and it must
+# not be absorbed: the leg printed fewer boxes than the verb acted on.
+t fleet-restart-dropped-row-disagrees disagree:cycled=0/1 \
+  "$(fleet_counts_agree restart 'restart: 1 restarted, 1 skipped-busy, 1 failed' \
+    <<<'crew-drill-builder skipped-busy
+crew-drill-reviewer failed')"
+t fleet-restart-empty-table-against-a-real-summary-disagrees disagree:cycled=0/1 \
+  "$(fleet_counts_agree restart 'restart: 1 restarted, 1 skipped-busy, 1 failed' </dev/null)"
+t fleet-restart-invented-row-disagrees disagree:cycled=2/1 \
+  "$(fleet_counts_agree restart 'restart: 1 restarted, 1 skipped-busy, 1 failed' \
+    <<<'crew-drill-triage cycled
+crew-drill-extra cycled
+crew-drill-builder skipped-busy
+crew-drill-reviewer failed')"
+
+# Case 6, and it is the whole design rather than one assertion: a patch that
+# satisfied a criterion by reading the verb's EXIT CODE could not tell these
+# two rounds apart. `crew restart --all` returns 3 for both — one box skipped
+# and every box skipped are the same number — and they are materially
+# different rounds. The classifier separates them; an rc cannot.
+FLEET_RESTART_ALL_BUSY='  crew-drill-triage: SKIPPED busy — duty lock held for 1m 0s
+  crew-drill-builder: SKIPPED busy — duty lock held for 4m 10s
+  crew-drill-reviewer: SKIPPED busy — duty lock age unavailable
+
+restart: 0 restarted, 3 skipped-busy, 0 failed'
+t fleet-rc-identical-rounds-differ-in-the-table cycled/skipped-busy \
+  "$(printf '%s/%s' \
+    "$(fleet_restart_outcome crew-drill-triage <<<"$FLEET_RESTART_MIXED")" \
+    "$(fleet_restart_outcome crew-drill-triage <<<"$FLEET_RESTART_ALL_BUSY")")"
+# The mutation that proves the assertion above is discriminating: a classifier
+# collapsed to one constant — which is all an rc reading can be — stops
+# agreeing with the verb's own counts on the mixed round.
+fleet_restart_outcome_rc_only() { printf 'skipped-busy\n'; }
+FLEET_RC_ONLY_ROWS="$(for b in crew-drill-triage crew-drill-builder crew-drill-reviewer; do
+  printf '%s %s\n' "$b" "$(fleet_restart_outcome_rc_only)"
+done)"
+t fleet-rc-only-classifier-mutation-disagrees disagree:cycled=0/1 \
+  "$(fleet_counts_agree restart 'restart: 1 restarted, 1 skipped-busy, 1 failed' \
+    <<<"$FLEET_RC_ONLY_ROWS")"
+
+# Case 2, the other half of drain_probe()'s contract: `restart` SKIPS a busy
+# box and `down` WAITS for one. Proving one says nothing about the other, so
+# both are read, and `waited` outranks `stopped` — a box that was waited for
+# and then stopped must not become indistinguishable from an idle box that
+# stopped at once, or the assertion passes on a round where nothing was busy.
+FLEET_DOWN='  crew-drill-triage: stopped
+  crew-drill-builder: waiting for duty lock held 4m 10s; use crew down --force to stop without draining
+  crew-drill-builder: stopped
+  crew-drill-absent: not present, skipping
+  down FAILED on crew-drill-reviewer (stop command failed)
+
+down: 2 stopped, 1 waited, 1 absent, 1 failed'
+t fleet-down-waits-for-the-busy-box waited \
+  "$(fleet_down_outcome crew-drill-builder <<<"$FLEET_DOWN")"
+t fleet-down-names-the-idle-box stopped \
+  "$(fleet_down_outcome crew-drill-triage <<<"$FLEET_DOWN")"
+t fleet-down-names-the-absent-box absent \
+  "$(fleet_down_outcome crew-drill-absent <<<"$FLEET_DOWN")"
+t fleet-down-names-the-failed-box failed \
+  "$(fleet_down_outcome crew-drill-reviewer <<<"$FLEET_DOWN")"
+t fleet-down-unreadable-lock-still-counts-as-a-wait waited \
+  "$(fleet_down_outcome crew-drill-x <<<'  crew-drill-x: waiting because duty lock state is unreadable; use crew down --force to stop without draining
+  crew-drill-x: stopped')"
+# A box the verb waited for is also one it then stopped, so the table's waited
+# row counts into both columns. Reconciled rather than asserted loosely: both
+# of the verb's numbers stay checked.
+t fleet-down-table-agrees-with-the-summary agree \
+  "$(fleet_counts_agree down 'down: 2 stopped, 1 waited, 1 absent, 1 failed' \
+    <<<'crew-drill-triage stopped
+crew-drill-builder waited
+crew-drill-absent absent
+crew-drill-reviewer failed')"
+# Must fail: a leg that graded the busy box `stopped` — the collapse this
+# precedence exists to prevent — disagrees with the verb's own waited count.
+t fleet-down-busy-box-graded-stopped-disagrees disagree:waited=0/1 \
+  "$(fleet_counts_agree down 'down: 2 stopped, 1 waited, 1 absent, 1 failed' \
+    <<<'crew-drill-triage stopped
+crew-drill-builder stopped
+crew-drill-absent absent
+crew-drill-reviewer failed')"
+
+# Case 3: a refusal payload carrying only a percentage is graded `unanswered`,
+# never ok. #652's own test plan, in its own words.
+FLEET_CUT_COMPOSED='  crew-drill-triage: armed cut at crew@0.1.3; root filesystem 41% used
+  crew-drill-builder: SKIPPED busy — duty lock held for 4m 10s
+  crew-drill-reviewer: REFUSED — root filesystem 93% used after reclaiming, over the 85% ceiling
+      largest: /var/lib/incus 4.1G; /home/bot/duty/logs 900M
+      whatever is in an armed image is the floor every later reset returns to; clear it before cutting
+
+reset --cut: 1 cut, 1 skipped-busy, 1 failed
+  failed: crew-drill-reviewer'
+FLEET_CUT_PERCENTAGE_ONLY='  crew-drill-triage: armed cut at crew@0.1.3; root filesystem 41% used
+  crew-drill-builder: SKIPPED busy — duty lock held for 4m 10s
+  crew-drill-reviewer: REFUSED — root filesystem 93% used after reclaiming, over the 85% ceiling
+
+reset --cut: 1 cut, 1 skipped-busy, 1 failed'
+t fleet-cut-names-the-cut-box cut \
+  "$(fleet_cut_outcome crew-drill-triage <<<"$FLEET_CUT_COMPOSED")"
+t fleet-cut-names-the-busy-box skipped-busy \
+  "$(fleet_cut_outcome crew-drill-builder <<<"$FLEET_CUT_COMPOSED")"
+t fleet-cut-names-the-refused-box refused \
+  "$(fleet_cut_outcome crew-drill-reviewer <<<"$FLEET_CUT_COMPOSED")"
+t fleet-cut-table-agrees-with-the-summary agree \
+  "$(fleet_counts_agree cut 'reset --cut: 1 cut, 1 skipped-busy, 1 failed' \
+    <<<'crew-drill-triage cut
+crew-drill-builder skipped-busy
+crew-drill-reviewer refused')"
+t fleet-refusal-with-a-composition-is-composed composed \
+  "$(fleet_refusal_answer crew-drill-reviewer <<<"$FLEET_CUT_COMPOSED")"
+# MUST FAIL: the same refusal with the composition line gone.
+t fleet-refusal-percentage-only-is-unanswered unanswered \
+  "$(fleet_refusal_answer crew-drill-reviewer <<<"$FLEET_CUT_PERCENTAGE_ONLY")"
+# ...and an honest report that the composition could NOT be taken is still not
+# the reading #652 asked for. Grading this `composed` would let a host whose
+# boxes have no passwordless sudo tick the criterion forever without ever
+# producing the figure.
+t fleet-refusal-unavailable-composition-is-unanswered unanswered \
+  "$(fleet_refusal_answer crew-drill-reviewer <<<'  crew-drill-reviewer: REFUSED — root filesystem 93% used after reclaiming, over the 85% ceiling
+      largest: unavailable (no passwordless sudo in the box to read / as root)')"
+# A refusal that names its cause in words carries its own composition.
+t fleet-refusal-worded-cause-is-composed composed \
+  "$(fleet_refusal_answer crew-drill-builder <<<'  crew-drill-builder: REFUSED — not logged in to GitHub (an armed checkpoint of a box without credentials restores to a box that cannot work); log it in with: box shell crew-drill-builder')"
+# The backstop, on a payload that was only ever a figure.
+t fleet-refusal-bare-figure-is-unanswered unanswered \
+  "$(fleet_refusal_answer crew-drill-builder <<<'  crew-drill-builder: REFUSED — 93% (85%)')"
+t fleet-refusal-absent-is-reported-as-such no-refusal \
+  "$(fleet_refusal_answer crew-drill-triage <<<"$FLEET_CUT_COMPOSED")"
+# A composition belonging to ANOTHER box cannot answer this one's refusal: the
+# block ends at the next box line.
+t fleet-refusal-does-not-borrow-a-neighbours-composition unanswered \
+  "$(fleet_refusal_answer crew-drill-reviewer <<<'  crew-drill-reviewer: REFUSED — root filesystem 93% used after reclaiming, over the 85% ceiling
+  crew-drill-triage: REFUSED — root filesystem 91% used after reclaiming, over the 85% ceiling
+      largest: /var/lib/incus 4.1G')"
+
+# Case 4: a restore that lands on `bootstrapped` MUST FAIL. #589 D4 — both
+# fallbacks return a creds-free, unhired box, which is a bootstrap and not a
+# maintenance, and the failure mode is that it happens SILENTLY.
+t fleet-restore-to-armed-is-a-restore restored \
+  "$(fleet_restore_landing crew-drill-triage armed \
+    <<<'  crew-drill-triage: restored to armed (crew@0.1.3) and started')"
+t fleet-restore-to-bootstrapped-fails wrong-label \
+  "$(fleet_restore_landing crew-drill-triage armed \
+    <<<'  crew-drill-triage: restored to bootstrapped (crew@0.1.3) and started')"
+t fleet-restore-to-pristine-fails wrong-label \
+  "$(fleet_restore_landing crew-drill-triage armed \
+    <<<'  crew-drill-triage: restored to pristine (crew@0.1.3) and started')"
+t fleet-restore-refusal-is-not-a-restore refused \
+  "$(fleet_restore_landing crew-drill-triage armed \
+    <<<'  crew-drill-triage: REFUSED — no armed checkpoint (crew reset --cut crew-drill-triage takes one); it is NOT rolled back to any other label')"
+t fleet-restore-failure-is-not-a-restore failed \
+  "$(fleet_restore_landing crew-drill-triage armed \
+    <<<'  crew-drill-triage: FAILED — restore failed; the box is stopped and NOT started')"
+t fleet-restore-silence-is-not-a-restore unknown \
+  "$(fleet_restore_landing crew-drill-triage armed </dev/null)"
+
+# The restored box's own first-tick evidence. Two files, because neither
+# answers it alone: duty.log carries the gate's verdict and boot-check.log the
+# probe it was taken from.
+FLEET_BOOT_OK='== boot check 2026-09-11T12:00:00+00:00 ==
+github.com
+  ✓ Logged in to github.com account claude-bot
+/dev/sda1  20G  8.1G  11G  43% /
+cli probe: ok'
+t fleet-boot-gate-passes passing \
+  "$(fleet_boot_gate_reading 'boot gate: new boot id 1a2b3c4d — the box restarted since the last tick' "$FLEET_BOOT_OK")"
+t fleet-boot-gate-first-tick-shape-passes passing \
+  "$(fleet_boot_gate_reading 'boot gate: first tick on this box (boot id 1a2b3c4d)' "$FLEET_BOOT_OK")"
+t fleet-boot-gate-auth-failure-is-a-failure failing \
+  "$(fleet_boot_gate_reading 'boot gate: auth probe failed — duty continues degraded, re-checking every tick' "$FLEET_BOOT_OK")"
+t fleet-boot-gate-cli-probe-failure-is-a-failure failing \
+  "$(fleet_boot_gate_reading 'boot gate: new boot id 1a2b3c4d — the box restarted since the last tick' \
+    '== boot check 2026-09-11T12:00:00+00:00 ==
+cli probe: FAILED')"
+# A gate that never ran on this boot is `unreadable` and NOT a pass: a restored
+# box that never reached its gate has proved nothing, and D4 asks for the
+# reading on the FIRST tick.
+t fleet-boot-gate-never-ran-is-unreadable unreadable \
+  "$(fleet_boot_gate_reading 'boot gate: new boot id 1a2b3c4d — the box restarted since the last tick' '')"
+t fleet-boot-gate-without-a-duty-log-verdict-is-unreadable unreadable \
+  "$(fleet_boot_gate_reading '' "$FLEET_BOOT_OK")"
+
+# The leg's own fold. An empty input stays empty so the caller can say "the leg
+# reached no case" rather than reporting a pass over zero assertions.
+t fleet-verdict-fold-is-worst-first FAIL \
+  "$(fleet_worst_verdict 'ok a
+skip b
+FAIL c
+ok d' | awk '{print $1}')"
+t fleet-verdict-fold-prefers-skip-over-ok skip \
+  "$(fleet_worst_verdict 'ok a
+skip b' | awk '{print $1}')"
+t fleet-verdict-fold-of-nothing-is-empty '' "$(fleet_worst_verdict '')"
+
+# --- #656: the leg's row in the round's record ------------------------------
+# Case 5: a leg that returns early out of a block must report `not-executed`,
+# never an absence that looks like coverage. The stub writes whatever the case
+# needs to the status channel and the round's own agreement check does the rest.
+cat >"$HARNESS/rehearsal-fleet.sh" <<'FLEET'
+#!/usr/bin/env bash
+printf 'fleet\n' >>"${DRILL_SECTION_LOG:-/dev/null}"
+[ -z "${DRILL_FLEET_LOG:-}" ] || printf '%s\n' "$*" >>"$DRILL_FLEET_LOG"
+[ -z "${REHEARSAL_FLEET_STATUS:-}" ] || [ -z "${DRILL_FLEET_VERDICT:-}" ] \
+  || printf '%s\n' "$DRILL_FLEET_VERDICT" >>"$REHEARSAL_FLEET_STATUS"
+exit "${DRILL_FLEET_RC:-0}"
+FLEET
+chmod +x "$HARNESS/rehearsal-fleet.sh"
+
+fleet_round() {  # <verdict> <rc> [extra args...]
+  local verdict="$1" rc="$2"; shift 2
+  DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" \
+    DRILL_SECTION_LOG="$SECTION_LOG" DRILL_REMOTE="$REMOTE" \
+    DRILL_FLEET_VERDICT="$verdict" DRILL_FLEET_RC="$rc" \
+    DRILL_FLEET_LOG="${DRILL_FLEET_LOG:-}" \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
+      --no-app --no-config-drill --no-resume-drill --no-attention-drill \
+      --no-attention-audit-drill --no-hygiene-drill --no-breaker-drill \
+      --no-notify-drill "$@" 2>&1
+}
+
+: >"$ROLE_LOG"
+: >"$INSTALL_LOG"
+: >"$SECTION_LOG"
+FLEET_OK_OUT="$(fleet_round 'ok per-box outcomes' 0)"; FLEET_OK_RC=$?
+t fleet-leg-green-round-rc 0 "$FLEET_OK_RC"
+t fleet-leg-green-row-is-executed 1 \
+  "$(grep -c '^## leg executed fleet  (ok; per-box outcomes on restart/down/cut + restore and canary-first upgrade)' \
+    <<<"$FLEET_OK_OUT")"
+t fleet-leg-produces-exactly-one-result-row 1 \
+  "$(grep -c '^##   .*  fleet  ' <<<"$FLEET_OK_OUT")"
+t fleet-leg-is-declared 1 \
+  "$(sed -n '/^declare -a DECLARED_LEGS=(/,/^)/p' "$ROOT/drill/rehearsal-all.sh" \
+    | grep -cw fleet)"
+
+# Case 5 proper: the leg ran, returned early, and wrote no verdict. The round
+# must record `not-executed` with the blocker named, and must not be green.
+FLEET_EARLY_OUT="$(fleet_round '' 0)"; FLEET_EARLY_RC=$?
+t fleet-leg-early-return-is-incomplete 2 "$FLEET_EARLY_RC"
+t fleet-leg-early-return-is-not-executed 1 \
+  "$(grep -c '^## leg not-executed fleet  (INCOMPLETE; the leg reached no case — per-box outcomes UNPROVEN)' \
+    <<<"$FLEET_EARLY_OUT")"
+
+# A reading the round could not take is INCOMPLETE and never an `ok`: the
+# mechanism is what this leg exists to prove, so a round that skipped a busy-box
+# reading has not proved it.
+FLEET_SKIP_OUT="$(fleet_round 'skip no box was held busy' 0)"; FLEET_SKIP_RC=$?
+t fleet-leg-skipped-reading-is-incomplete 2 "$FLEET_SKIP_RC"
+t fleet-leg-skipped-reading-names-what-was-skipped 1 \
+  "$(grep -c '^## leg not-executed fleet  (INCOMPLETE; leg skipped a reading: no box was held busy)' \
+    <<<"$FLEET_SKIP_OUT")"
+
+FLEET_FAIL_OUT="$(fleet_round 'FAIL crew-drill-builder read cycled, not skipped-busy' 1)"
+FLEET_FAIL_RC=$?
+t fleet-leg-failure-reds-the-round 1 "$FLEET_FAIL_RC"
+t fleet-leg-failure-names-the-box 1 \
+  "$(grep -c '^## leg executed fleet  (FAIL; crew-drill-builder read cycled, not skipped-busy)' \
+    <<<"$FLEET_FAIL_OUT")"
+# A leg whose script died without a verdict is still a FAIL and not an
+# INCOMPLETE: the difference is whether the round DISCOVERED a blocker or the
+# leg fell over, and collapsing them would hide the second.
+FLEET_CRASH_OUT="$(fleet_round '' 1)"; FLEET_CRASH_RC=$?
+t fleet-leg-crash-without-a-verdict-reds 1 "$FLEET_CRASH_RC"
+t fleet-leg-crash-is-recorded-as-a-failure 1 \
+  "$(grep -c '^## leg executed fleet  (FAIL; the leg exited 1)' <<<"$FLEET_CRASH_OUT")"
+
+# The operator's own exclusion is a `skip` row, and it is the ONLY shape that
+# is one — the partition every other leg in this file keeps.
+# The section log is reset first: it accumulates across every round above, so
+# a count taken over the whole file would be answering a different question.
+: >"$SECTION_LOG"
+FLEET_OPTOUT_OUT="$(fleet_round 'ok unused' 0 --no-fleet-drill)"; FLEET_OPTOUT_RC=$?
+t fleet-leg-opt-out-round-rc 0 "$FLEET_OPTOUT_RC"
+t fleet-leg-opt-out-is-named 1 \
+  "$(grep -c '^## leg not-executed fleet  (skip; --no-fleet-drill)' <<<"$FLEET_OPTOUT_OUT")"
+# An opt-out that still RAN the leg would be a skip row over a real mutation of
+# the host's boxes — the one row in this file where that is not merely wrong.
+t fleet-leg-opt-out-does-not-invoke-the-leg 0 \
+  "$(grep -cx fleet "$SECTION_LOG" || true)"
+
+# The leg is driven from the round's OWN roster, and it runs after the app
+# phase. Both are read from what the orchestrator actually passed.
+DRILL_FLEET_LOG="$TMP/fleet-args.log"
+: >"$DRILL_FLEET_LOG"
+: >"$SECTION_LOG"
+FLEET_ARGS_OUT="$(DRILL_FLEET_LOG="$DRILL_FLEET_LOG" fleet_round 'ok per-box outcomes' 0)"
+t fleet-leg-is-driven-from-the-drilled-roster 1 \
+  "$(grep -cFx -- '--boxes crew-drill-reviewer --agent claude --roles reviewer' "$DRILL_FLEET_LOG")"
+# Exactly once. A leg invoked twice would produce two result rows, which the
+# round's own agreement check reds — but it would also have cut two snapshots.
+t fleet-leg-runs-exactly-once-per-round 1 "$(wc -l <"$DRILL_FLEET_LOG" | tr -d ' ')"
+t fleet-leg-green-round-with-args-row 1 \
+  "$(grep -c '^## leg executed fleet  (ok; ' <<<"$FLEET_ARGS_OUT")"
+
+# No role reached a box: the leg has no roster to drive the verbs over, and
+# that is a blocker the round DISCOVERED rather than one anybody asked for.
+: >"$ROLE_LOG"
+: >"$INSTALL_LOG"
+if FLEET_NOBOX_OUT="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" \
+    DRILL_SECTION_LOG="$SECTION_LOG" DRILL_REMOTE="$REMOTE" \
+    DRILL_ROLE_STAGE=pre-install DRILL_ROLE_RC=1 \
+    DRILL_FLEET_VERDICT='ok unused' \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
+      --no-app --no-config-drill --no-resume-drill --no-attention-drill \
+      --no-attention-audit-drill --no-hygiene-drill --no-breaker-drill \
+      --no-notify-drill 2>&1)"; then
+  FLEET_NOBOX_RC=0
+else
+  FLEET_NOBOX_RC=$?
+fi
+t fleet-leg-without-a-box-is-blocked-not-skipped 1 \
+  "$(grep -c '^## leg not-executed fleet  (SKIPPED; blocked by role install: no installed drill box)' \
+    <<<"$FLEET_NOBOX_OUT")"
+t fleet-leg-without-a-box-keeps-the-round-red 1 "$FLEET_NOBOX_RC"
+
+# The runbook documents it, in both directions, through the same derivation the
+# #497 guard above uses rather than a third list maintained here.
+t fleet-leg-is-documented-in-the-runbook 1 \
+  "$(runbook_documented_legs | grep -cx fleet)"
+t fleet-leg-is-in-the-runbook-prose 1 \
+  "$(runbook_prose_legs | grep -cx fleet)"
 
 suite_finish

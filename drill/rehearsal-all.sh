@@ -691,12 +691,19 @@ if [ "$FLEET_DRILL" -eq 1 ]; then
       || FLEET_VERDICT=""
     FLEET_WHY="${FLEET_VERDICT#* }"
     FLEET_VERDICT="${FLEET_VERDICT%% *}"
-    if [ -z "$FLEET_VERDICT" ]; then
-      SUMMARY+=("INCOMPLETE fleet  (the leg reached no case — per-box outcomes UNPROVEN)")
-      [ "$overall" -eq 1 ] || overall=2
-    elif [ "$FLEET_VERDICT" = FAIL ] || [ "$rc" -ne 0 ]; then
+    # The rc is read FIRST and only here: a leg that fell over is a FAILURE,
+    # and a leg that ran and discovered a blocker is INCOMPLETE. Asking the
+    # verdict channel first would collapse the first into the second — a script
+    # that died before writing anything looks exactly like one that reached no
+    # case — and a round would then report a crashed leg as merely unproven.
+    # This is the ONLY thing the rc is consulted for; every per-box reading
+    # inside the leg comes out of the verbs' output.
+    if [ "$rc" -ne 0 ] || [ "$FLEET_VERDICT" = FAIL ]; then
       SUMMARY+=("FAIL       fleet  (${FLEET_WHY:-the leg exited $rc})")
       overall=1
+    elif [ -z "$FLEET_VERDICT" ]; then
+      SUMMARY+=("INCOMPLETE fleet  (the leg reached no case — per-box outcomes UNPROVEN)")
+      [ "$overall" -eq 1 ] || overall=2
     elif [ "$FLEET_VERDICT" = skip ]; then
       # A reading the round could not take — a one-box roster has no busy-skip
       # to exercise, and a round where nothing was refused cannot answer #652's
