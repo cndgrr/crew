@@ -329,7 +329,7 @@ against it.
 
 The declared legs are: `hygiene`, `breaker`, `resume`, `attention`,
 `attention-audit`, `notify`, `installer`, `config`, `app`, `browser`,
-`app-armed`, `teardown`. Each has an entry below, headed by its row name —
+`app-armed`, `fleet`, `teardown`. Each has an entry below, headed by its row name —
 that heading IS the leg's name, and CI diffs the set of them against the
 harness's own declaration in both directions, so this runbook cannot fall a
 release behind the harness again without a red check.
@@ -581,6 +581,46 @@ clock-comparable.
   requires an armed member)`, or `skip (--no-app)`.
 - **A failure means** the console misreads a box that is genuinely working —
   the case the drill's own fresh boxes cannot present.
+
+### fleet — `drill/rehearsal-fleet.sh`
+
+The three fleet-lifecycle verbs — `crew restart --all`, `crew down`,
+`crew reset --cut --all` — plus a restore and a canary-first `crew upgrade`,
+driven over the round's own roster with **a per-box outcome for every member**.
+It is role-independent: what `--all`, a per-box outcome and a busy-skip need is
+a roster, which a round has by the end of phase 2 whatever roles it ran, and
+which the single-box `config` leg deliberately does not carry.
+
+It runs **last of the independent phases, immediately before teardown**, and
+that ordering is load-bearing. This is the only leg that stops boxes, cuts
+snapshots and rolls one back; running it earlier would hand the app phase a
+fleet that is half down.
+
+- **Needs** at least one role to have reached a box, and **two** for the
+  busy-box readings: one box is held busy by a real `flock` on the real duty
+  lock — the same path a duty tick takes and the one `drain_probe()` reads — so
+  the skip is exercised rather than assumed. It builds its own operator trio
+  with a real `crew init` and `CREW_EXPECT_OPERATOR_CONFIG=1`, and it refuses
+  any target that is not a `crew-drill-*` box.
+- **Produces** the `fleet` row: `ok (per-box outcomes on restart/down/cut +
+  restore and canary-first upgrade)`, `INCOMPLETE (leg skipped a reading: …)`,
+  `INCOMPLETE (the leg reached no case — per-box outcomes UNPROVEN)`,
+  `FAIL (…)`, `SKIPPED (blocked by role install: no installed drill box)`, or
+  `skip (--no-fleet-drill)`.
+- **Every verdict is read from per-box OUTPUT and none from an exit code.** The
+  three verbs return one number for a whole roster: three boxes cycled and three
+  boxes skipped are distinguishable in the text and not in the rc. The
+  classifiers are in `drill/fleet-lifecycle.sh`, and the fixture suite executes
+  them rather than grepping the leg's source.
+- **A failure means** a lifecycle verb does not do across a roster what a single
+  operator reading suggested it did — a box it never named, a busy box it
+  cycled anyway, a refusal that reported a percentage and not what to clear, or
+  a restore that quietly landed on `bootstrapped` instead of `armed`.
+- **What it does NOT claim.** The fleet-identity half: seven real boxes with
+  weeks of accreted state, real `gh` credentials and real vendor logins. A
+  restore on a box hired ninety minutes ago proves the restore *path*; it does
+  not prove a production reviewer comes back without a re-login. That reading
+  is the operator's, on the release candidate's own gate.
 
 ### teardown — `drill/teardown.sh`
 

@@ -158,7 +158,7 @@ round_run() {  # <script> <roles> <ref>
     bash "$script" --remote "$REMOTE" --ref "$ref" --roles "$roles" \
       --keep --no-app --no-config-drill \
       --no-resume-drill --no-attention-drill --no-attention-audit-drill \
-      --no-hygiene-drill --no-breaker-drill --no-notify-drill 2>&1
+      --no-hygiene-drill --no-breaker-drill --no-notify-drill --no-fleet-drill 2>&1
 }
 
 # Resolve main once, then move it after the first role. Every role still gets
@@ -223,7 +223,7 @@ if tree_out="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" \
     bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer \
       --keep --no-app --no-config-drill --no-resume-drill \
       --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
-      --no-breaker-drill --no-notify-drill 2>&1)"; then tree_rc=0; else tree_rc=$?; fi
+      --no-breaker-drill --no-notify-drill --no-fleet-drill 2>&1)"; then tree_rc=0; else tree_rc=$?; fi
 t drill-tree-round-rc 0 "$tree_rc"
 t drill-tree-role-ships-head "$SECOND" "$(awk '{print $4}' "$ROLE_LOG")"
 t drill-tree-installer-ships-head "$SECOND" "$(awk '{print $4}' "$INSTALL_LOG")"
@@ -231,7 +231,7 @@ t drill-tree-record-names-head 1 \
   "$(grep -cF "## drilled source: $SECOND (tree $SOURCE)" <<<"$tree_out")"
 t drill-tree-phase-zero-names-head 1 \
   "$(grep -cF "phase 0: crew at $SECOND (tree $SOURCE), static checks" <<<"$tree_out")"
-t drill-record-enumerates-all-declared-legs 12 \
+t drill-record-enumerates-all-declared-legs 13 \
   "$(grep -c '^## leg \(executed\|not-executed\) ' <<<"$tree_out")"
 t drill-record-names-browser-exclusion 1 \
   "$(grep -c '^## leg not-executed browser  (skip; --no-app)' <<<"$tree_out")"
@@ -257,7 +257,7 @@ if unwired_out="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" \
     DRILL_REMOTE="$REMOTE" bash "$UNWIRED" --tree "$SOURCE" --roles reviewer \
       --no-app --no-config-drill --no-resume-drill \
       --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
-      --no-breaker-drill --no-notify-drill 2>&1)"; then
+      --no-breaker-drill --no-notify-drill --no-fleet-drill 2>&1)"; then
   unwired_rc=0
 else
   unwired_rc=$?
@@ -279,7 +279,7 @@ if undeclared_out="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG"
     DRILL_REMOTE="$REMOTE" bash "$UNDECLARED" --tree "$SOURCE" --roles reviewer \
       --keep --no-app --no-config-drill --no-resume-drill \
       --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
-      --no-breaker-drill --no-notify-drill 2>&1)"; then
+      --no-breaker-drill --no-notify-drill --no-fleet-drill 2>&1)"; then
   undeclared_rc=0
 else
   undeclared_rc=$?
@@ -298,7 +298,7 @@ if no_reason_out="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" 
     DRILL_REMOTE="$REMOTE" bash "$NO_REASON" --tree "$SOURCE" --roles reviewer \
       --keep --no-app --no-config-drill --no-resume-drill \
       --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
-      --no-breaker-drill --no-notify-drill 2>&1)"; then
+      --no-breaker-drill --no-notify-drill --no-fleet-drill 2>&1)"; then
   no_reason_rc=0
 else
   no_reason_rc=$?
@@ -321,7 +321,7 @@ if phase2_out="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" \
     bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer \
       --keep --no-resume-drill --no-attention-drill \
       --no-attention-audit-drill --no-hygiene-drill \
-      --no-breaker-drill --no-notify-drill 2>&1)"; then
+      --no-breaker-drill --no-notify-drill --no-fleet-drill 2>&1)"; then
   phase2_rc=0
 else
   phase2_rc=$?
@@ -353,7 +353,7 @@ if armed_out="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" \
     DRILL_SECTION_A_ARMED=1 bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" \
       --roles reviewer --keep --no-app --no-config-drill --no-resume-drill \
       --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
-      --no-breaker-drill --no-notify-drill 2>&1)"; then
+      --no-breaker-drill --no-notify-drill --no-fleet-drill 2>&1)"; then
   armed_rc=0
 else
   armed_rc=$?
@@ -368,7 +368,7 @@ if unreadable_out="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG"
     DRILL_SECTION_A_UNREADABLE=1 bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" \
       --roles reviewer --keep --no-app --no-config-drill --no-resume-drill \
       --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
-      --no-breaker-drill --no-notify-drill 2>&1)"; then
+      --no-breaker-drill --no-notify-drill --no-fleet-drill 2>&1)"; then
   unreadable_rc=0
 else
   unreadable_rc=$?
@@ -386,7 +386,7 @@ if browser_skip_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
     DRILL_BROWSER_STATUS=skip DRILL_REMOTE="$REMOTE" \
     bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
       --no-resume-drill --no-attention-drill --no-attention-audit-drill \
-      --no-hygiene-drill --no-breaker-drill --no-notify-drill 2>&1)"; then
+      --no-hygiene-drill --no-breaker-drill --no-notify-drill --no-fleet-drill 2>&1)"; then
   browser_skip_rc=0
 else
   browser_skip_rc=$?
@@ -409,7 +409,7 @@ if app_roster_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
     bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
       --app-roster "$TMP/armed.roster" --no-resume-drill \
       --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
-      --no-breaker-drill --no-notify-drill 2>&1)"; then
+      --no-breaker-drill --no-notify-drill --no-fleet-drill 2>&1)"; then
   app_roster_rc=0
 else
   app_roster_rc=$?
@@ -438,7 +438,7 @@ if app_roster_incomplete_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
     bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
       --app-roster "$TMP/armed.roster" --no-resume-drill \
       --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
-      --no-breaker-drill --no-notify-drill 2>&1)"; then
+      --no-breaker-drill --no-notify-drill --no-fleet-drill 2>&1)"; then
   app_roster_incomplete_rc=0
 else
   app_roster_incomplete_rc=$?
@@ -454,7 +454,7 @@ if app_roster_missing_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
     bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
       --app-roster "$TMP/armed.roster" --no-resume-drill \
       --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
-      --no-breaker-drill --no-notify-drill 2>&1)"; then
+      --no-breaker-drill --no-notify-drill --no-fleet-drill 2>&1)"; then
   app_roster_missing_rc=0
 else
   app_roster_missing_rc=$?
@@ -470,7 +470,7 @@ if app_failure_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
     bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
       --app-roster "$TMP/armed.roster" --no-resume-drill \
       --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
-      --no-breaker-drill --no-notify-drill 2>&1)"; then
+      --no-breaker-drill --no-notify-drill --no-fleet-drill 2>&1)"; then
   app_failure_rc=0
 else
   app_failure_rc=$?
@@ -490,7 +490,7 @@ if no_generated_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
     bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
       --app-roster "$TMP/armed.roster" --no-resume-drill \
       --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
-      --no-breaker-drill --no-notify-drill 2>&1)"; then
+      --no-breaker-drill --no-notify-drill --no-fleet-drill 2>&1)"; then
   no_generated_rc=0
 else
   no_generated_rc=$?
@@ -527,7 +527,7 @@ if disarmed_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
     DRILL_APP_STATUS=could-not-compare DRILL_REMOTE="$REMOTE" \
     bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
       --no-resume-drill --no-attention-drill --no-attention-audit-drill \
-      --no-hygiene-drill --no-breaker-drill --no-notify-drill 2>&1)"; then
+      --no-hygiene-drill --no-breaker-drill --no-notify-drill --no-fleet-drill 2>&1)"; then
   disarmed_rc=0
 else
   disarmed_rc=$?
@@ -558,7 +558,7 @@ if phase2_retained_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
     DRILL_REMOTE="$REMOTE" DRILL_ROLE_STAGE=phase2 DRILL_ROLE_RC=1 \
     bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer \
       --no-resume-drill --no-attention-drill --no-attention-audit-drill \
-      --no-breaker-drill --no-notify-drill 2>&1)"; then
+      --no-breaker-drill --no-notify-drill --no-fleet-drill 2>&1)"; then
   phase2_retained_rc=0
 else
   phase2_retained_rc=$?
@@ -579,7 +579,7 @@ if preinstall_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
     DRILL_REMOTE="$REMOTE" DRILL_ROLE_STAGE=none DRILL_ROLE_RC=1 \
     bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
       --no-resume-drill --no-attention-drill --no-attention-audit-drill \
-      --no-hygiene-drill --no-breaker-drill --no-notify-drill 2>&1)"; then
+      --no-hygiene-drill --no-breaker-drill --no-notify-drill --no-fleet-drill 2>&1)"; then
   preinstall_rc=0
 else
   preinstall_rc=$?
@@ -861,7 +861,7 @@ if tree_report_out="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG
     bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --ref refs/pull/450/head \
       --roles reviewer --keep --no-app --no-config-drill --no-resume-drill \
       --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
-      --no-breaker-drill --no-notify-drill 2>&1)"; then :; fi
+      --no-breaker-drill --no-notify-drill --no-fleet-drill 2>&1)"; then :; fi
 t drill-report-tree-round-names-no-pr 0 \
   "$(grep -cE 'PR #[0-9]' <<<"$tree_report_out" || true)"
 t drill-report-tree-round-passes-no-source-ref '-' \
@@ -903,7 +903,7 @@ runbook_prose_legs() {  # the enumerating sentence, read to its blank line
     | grep -oE '`[a-z][a-z-]*`' | tr -d '`' | sort -u
 }
 
-t drill-runbook-harness-declares-legs 12 "$(runbook_harness_legs | n)"
+t drill-runbook-harness-declares-legs 13 "$(runbook_harness_legs | n)"
 t drill-runbook-documents-every-declared-leg '' \
   "$(comm -23 <(runbook_harness_legs) <(runbook_documented_legs) | paste -sd, -)"
 t drill-runbook-documents-no-undeclared-leg '' \
@@ -918,7 +918,7 @@ t drill-runbook-prose-list-matches-declaration '' \
 # this issue's own finding. Both the census and the runbook go stale silently,
 # so the assertion above has to red on a declaration it has never seen.
 MUTATED_ALL="$TMP/rehearsal-all-extra-leg.sh"
-sed 's/^  installer config app browser app-armed teardown$/  installer config app browser app-armed teardown newleg/' \
+sed 's/^  installer config app browser app-armed fleet teardown$/  installer config app browser app-armed fleet teardown newleg/' \
   "$ROOT/drill/rehearsal-all.sh" >"$MUTATED_ALL"
 t drill-runbook-extra-leg-mutation-applied 1 \
   "$(sed -n '/^declare -a DECLARED_LEGS=(/,/^)/p' "$MUTATED_ALL" \
