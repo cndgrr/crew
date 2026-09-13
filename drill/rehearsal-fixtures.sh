@@ -146,7 +146,15 @@ rehearsal_load_installed_queue_labels() {
     printf "%s\n" \
       "$LABEL_READY" "$LABEL_CLAIMED" "$LABEL_BLOCKED" \
       "$LABEL_POST_MERGE" "$LABEL_EPIC" "$LABEL_NEEDS_TRIAGE"
-  ' | sed '/^$/d' | sort -u)"
+  ' | sed -e 's/\r$//' -e '/^$/d' | sort -u)"
+  # The same end-of-line CR strip the board read carries, for a reason this
+  # issue created: before it, this set was only COUNTED, and a transport that
+  # translated line endings resolved six names that happened to end in CR and
+  # the row still read green. It is now the set an issue's labels are matched
+  # against, where a trailing CR matches nothing the board carries and the stray
+  # assertion reds on a correct engine. Only the end-of-line CR, for the reason
+  # stated at the board read.
+  #
   # Resolved here rather than at the call site, so the set the stray assertion
   # matches against and the set this row counts cannot drift apart — and so a
   # fixture can read the set itself instead of re-deriving it and passing under
