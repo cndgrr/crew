@@ -70,6 +70,7 @@ rehearsal_load_installed_board_labels() {
     esac
   done
   [ -z "$missing" ] || {
+    # shellcheck disable=SC2034  # printed by rehearsal.sh's refusal, like REHEARSAL_ATTENTION_REASON
     REHEARSAL_BOARD_LABEL_REASON="the box's installed configuration resolved no usable $missing"
     return 1
   }
@@ -136,11 +137,17 @@ rehearsal_load_installed_queue_labels() {
 # below: `grep -q` exits on its first match and the producer takes SIGPIPE,
 # which under `set -o pipefail` makes the whole command red at random (#449).
 # The guard in shared/test/common.sh reds on the shape itself.
+#
+# `queue_names`, not `names`. shellcheck resolves a sourced file's locals into
+# the sourcing file's namespace, and `names` there turns shared/test/common.sh's
+# own `r1=names-arrival-tick` into an arithmetic suggestion (SC2100) in a line
+# this issue never touched — the same trap rehearsal-attention-audit.sh records
+# against `rows`.
 rehearsal_stray_left_the_queue() {
-  local repo="$1" num="$2" names
+  local repo="$1" num="$2" queue_names
   [ -n "$REHEARSAL_QUEUE_LABEL_PATTERN" ] || return 1
-  names="$(gh api "repos/$repo/issues/$num" --jq '.labels[].name')" || return 1
-  grep -qxE "$REHEARSAL_QUEUE_LABEL_PATTERN" <<<"$names"
+  queue_names="$(gh api "repos/$repo/issues/$num" --jq '.labels[].name')" || return 1
+  grep -qxE "$REHEARSAL_QUEUE_LABEL_PATTERN" <<<"$queue_names"
 }
 
 rehearsal_load_installed_answer_mark() {

@@ -2130,6 +2130,7 @@ bv_gh() {
 # touches is subshell-local, so a drive's result is its stdout and the files it
 # wrote. A read that refuses prints LOAD-RC and runs nothing, which is the
 # refusal rehearsal.sh turns into its exit-1 above the first mint.
+# shellcheck disable=SC2317  # the stubs are reached only through the legs, which shellcheck cannot follow
 bv_drive() {
   (
     # shellcheck source=drill/rehearsal-fixtures.sh
@@ -2157,6 +2158,7 @@ bv_drive() {
 # shapes, then both disarming cleanups. Every mint and every DELETE in one
 # trace, so a site left literal is visible as a wrong name rather than as a
 # missing row somewhere else.
+# shellcheck disable=SC2016  # the snippet is eval'd by bv_drive, which is where it expands
 BV_PHASE2='
   rehearsal_mint_board_vocabulary owner/repo
   inum="$(rehearsal_mint_attention_demand owner/repo box-identity t b)"
@@ -2179,7 +2181,9 @@ bv_deletes() { grep '^delete:' "$BV_TRACE" | sed 's|^delete:.*/labels/||' | sort
 # duty_attention fetches, the second is what the builder's queue keys on, and
 # between them they cover the role-independent half and both role blocks.
 bv_box_conf 'LABEL_ATTENTION="needs-human"' 'LABEL_READY="queued"'
-BV_MOVED="$(bv_drive "$BV_PHASE2")"
+# Driven for its TRACE, not its rows: every assertion below reads the requests
+# the path made, which is the only place a mint's label name is observable.
+bv_drive "$BV_PHASE2" >/dev/null
 t drill-board-vocab-moved-mint-names 1 \
   "$(grep -c '^needs-human:d93f0b needs-triage:fbca04 queued:0e8a16 claimed:1d76db blocked:b60205 post-merge:006b75 epic:5319e7$' <<<"$(bv_vocab)" || true)"
 # ...and the FIXTURES, in order: the attention demand, post-merge, the ready
@@ -2211,8 +2215,11 @@ t drill-board-vocab-moved-mints-no-shipped-name 0 \
 # drive's subshell inherits: a `'`-quoted snippet cannot carry a `'` of its own
 # and a here-string built inside it would be this fixture writing the board
 # rather than reading it.
+# shellcheck disable=SC2034  # read inside bv_drive's eval'd snippet
 BV_JSON_MOVED='{"labels":[{"name":"queued"}]}'
+# shellcheck disable=SC2034  # read inside bv_drive's eval'd snippet
 BV_JSON_SHIPPED='{"labels":[{"name":"ready"}]}'
+# shellcheck disable=SC2034  # read inside bv_drive's eval'd snippet
 BV_JSON_HALF='{"labels":[{"name":"queued"},{"name":"claimed"}]}'
 bv_board_put 200 needs-human           # still flagged under the moved name
 bv_board_put 201 attention             # flagged under a name nobody moved to
@@ -2222,6 +2229,7 @@ bv_board_put 204 post-merge            # the terminal fixture, untouched
 bv_board_put 205 queued,needs-human    # ruled into the moved queue
 bv_board_put 206 ready                 # ruled into the SHIPPED queue name
 bv_board_put 207 post-merge,epic       # a label the session added
+# shellcheck disable=SC2016  # the snippet is eval'd by bv_drive, which is where it expands
 BV_PRED="$(bv_drive '
   rehearsal_attention_flag_cleared owner/repo 200 && echo cleared-200 || echo armed-200
   rehearsal_attention_flag_cleared owner/repo 201 && echo cleared-201 || echo armed-201
@@ -2260,6 +2268,7 @@ t drill-board-vocab-ready-swap-needs-claimed-gone 1 "$(grep -cx unswapped-half <
 bv_box_conf 'LABEL_POST_MERGE="landed"' 'LABEL_CLAIMED="wip"'
 bv_board_put 208 landed
 bv_board_put 209 post-merge
+# shellcheck disable=SC2016  # the snippet is eval'd by bv_drive, which is where it expands
 BV_PM="$(bv_drive '
   rehearsal_mint_post_merge_fixture owner/repo t b >/dev/null
   rehearsal_attention_file_fixture owner/repo box-identity t b
@@ -2294,7 +2303,7 @@ t drill-board-vocab-collided-queue-set-reds 1 \
 # to date ran on it — so it is here as the non-regression half and never as
 # evidence for the rest.
 bv_box_conf
-BV_SHIPPED="$(bv_drive "$BV_PHASE2")"
+bv_drive "$BV_PHASE2" >/dev/null   # driven for its trace, like the moved board
 t drill-board-vocab-shipped-mint-names 1 \
   "$(grep -c '^attention:d93f0b needs-triage:fbca04 ready:0e8a16 claimed:1d76db blocked:b60205 post-merge:006b75 epic:5319e7$' <<<"$(bv_vocab)" || true)"
 t drill-board-vocab-shipped-fixture-labels 1 \
@@ -2302,6 +2311,7 @@ t drill-board-vocab-shipped-fixture-labels 1 \
 t drill-board-vocab-shipped-cleanup-deletes 1 \
   "$(grep -c '^attention$' <<<"$(bv_deletes)" || true)"
 bv_board_put 300 ready
+# shellcheck disable=SC2016  # the snippet is eval'd by bv_drive, which is where it expands
 BV_SHIPPED_PRED="$(bv_drive '
   rehearsal_builder_left_the_queue owner/repo 300 && echo off-300 || echo on-300
   rehearsal_load_installed_queue_labels >/dev/null
