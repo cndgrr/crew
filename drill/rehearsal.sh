@@ -782,10 +782,10 @@ else
   wait_for 900 "attention: 📌 pickup comment" bash -c \
     "out=\$(gh api 'repos/$SANDBOX/issues/$inum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length'); grep -qE '^[1-9][0-9]*$' <<<\"\$out\""
   # The predicate lives in rehearsal-fixtures.sh beside the mint it grades, and
-  # carries the `grep -qx true` reasoning with it: `gh api --jq` prints NOTHING
-  # when the filter yields null (real jq prints "null"), so testing for the
-  # literal string could never match — label present emitted "0", label absent
-  # emitted "", and the check failed in BOTH states.
+  # carries its reasoning with it: the effective name goes to `jq -e --arg` as
+  # data, never into the filter as source text, and the answer comes back as an
+  # exit status rather than through `gh api --jq`, which marshals a null to
+  # NOTHING and so cannot carry a boolean at all.
   wait_for 300 "attention: label removed (ack re-arms)" \
     rehearsal_attention_flag_cleared "$SANDBOX" "$inum"
 
@@ -826,15 +826,17 @@ else
   # the session does the labelling — so the assertion is on what the session
   # leaves behind, not on the signal.
   tnum="$(gh api "repos/$SANDBOX/issues" -f title="drill: triage stray $(date -u +%H%M%S)" \
-    -f body="Drill fixture: an unlabelled open issue. Rule on it — leave one short ruling comment and put it in exactly one of ready/claimed/blocked (or epic). Do not open PRs." \
+    -f body="Drill fixture: an unlabelled open issue. Rule on it — leave one short ruling comment and put it in exactly one of $REHEARSAL_LABEL_READY/$REHEARSAL_LABEL_CLAIMED/$REHEARSAL_LABEL_BLOCKED (or $REHEARSAL_LABEL_EPIC). Do not open PRs." \
     --jq .number)"
   rehearsal_fixture_record_issue "$SANDBOX" "$tnum"
   bx "~/duty/bin/tick.sh" || true
   wait_for 900 "triage: stray drew a ruling comment" bash -c \
     "out=\$(gh api 'repos/$SANDBOX/issues/$tnum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length'); grep -qE '^[1-9][0-9]*$' <<<\"\$out\""
-  # The board invariant: no open issue may remain queue-unlabelled. The pattern
-  # is built by the loader above, off the box's EFFECTIVE queue names, and read
-  # by the predicate rather than re-derived here.
+  # The board invariant: no open issue may remain queue-unlabelled. The set is
+  # resolved by the loader above, off the box's EFFECTIVE queue names, and
+  # matched literally by the predicate rather than re-derived here. The demand
+  # above names those same resolved names, so the session is asked for
+  # vocabulary the board actually carries.
   wait_for 300 "triage: stray left the unlabelled queue" \
     rehearsal_stray_left_the_queue "$SANDBOX" "$tnum"
   # Same tick, second time: triage must not re-rule a settled issue.

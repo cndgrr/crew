@@ -2052,10 +2052,12 @@ bv_board_put()    { printf '%s %s\n' "$1" "$2" >>"$BV_BOARD"; }
 bv_board_labels() { awk -v n="$1" '$1 == n { v = $2 } END { print v }' "$BV_BOARD"; }
 
 # `gh --jq` MARSHALS the value: a filter yielding null prints NOTHING, where
-# real jq prints "null". Modelled rather than approximated, because the
-# `grep -qx true` idiom in every predicate under test exists precisely because
-# of it — a fixture that printed "null" would let a predicate comparing the raw
-# output pass here and fail in a drill.
+# real jq prints "null". Modelled rather than approximated, because it is why no
+# predicate under test reads a boolean back through `--jq` — one that did would
+# see "" for both answers — and because the `.number` and `join(" ")` reads that
+# DO go through it would otherwise pass here on output a drill never produces.
+# A read with no filter hands back the whole issue JSON, which is what the two
+# `jq -e --arg` predicates grade.
 bv_emit() {
   local json="$1" filter="${2:-}"
   if [ -z "$filter" ]; then printf '%s\n' "$json"; return 0; fi
@@ -2238,7 +2240,7 @@ BV_PRED="$(bv_drive '
   rehearsal_post_merge_labels_intact owner/repo 204 post-merge && echo intact-204 || echo moved-204
   rehearsal_post_merge_labels_intact owner/repo 207 post-merge && echo intact-207 || echo moved-207
   rehearsal_load_installed_queue_labels
-  echo "PATTERN=$REHEARSAL_QUEUE_LABEL_PATTERN"
+  echo "QUEUESET=$(paste -sd, - <<<"$REHEARSAL_QUEUE_LABELS")"
   rehearsal_stray_left_the_queue owner/repo 205 && echo ruled-205 || echo stray-205
   rehearsal_stray_left_the_queue owner/repo 206 && echo ruled-206 || echo stray-206
   rehearsal_attention_is_ready_from_json "$BV_JSON_MOVED" >/dev/null \
@@ -2280,13 +2282,13 @@ t drill-board-vocab-moved-claimed-mint 1 "$(bv_minted wip,attention)"
 t drill-board-vocab-moved-post-merge-intact 1 "$(grep -cx intact-208 <<<"$BV_PM" || true)"
 t drill-board-vocab-moved-post-merge-shipped-name-reds 1 "$(grep -cx moved-209 <<<"$BV_PM" || true)"
 
-# (c) QUEUE_LABEL_PATTERN CARRIES THE MOVED `ready`, and the stray assertion
+# (c) THE RESOLVED QUEUE SET CARRIES THE MOVED `ready`, and the stray assertion
 # grades against it: an issue ruled into `queued` has left the unlabelled
 # queue, and one carrying the shipped `ready` on this board has not.
 t drill-board-vocab-queue-labels-resolve-six 1 \
   "$(grep -c '^ok triage: installed queue-label set resolves six names$' <<<"$BV_PRED" || true)"
-t drill-board-vocab-queue-pattern-carries-moved-ready 1 \
-  "$(grep -c '^PATTERN=blocked|claimed|epic|needs-triage|post-merge|queued$' <<<"$BV_PRED" || true)"
+t drill-board-vocab-queue-set-carries-moved-ready 1 \
+  "$(grep -cxF 'QUEUESET=blocked,claimed,epic,needs-triage,post-merge,queued' <<<"$BV_PRED" || true)"
 t drill-board-vocab-stray-ruled-into-moved-queue 1 "$(grep -cx ruled-205 <<<"$BV_PRED" || true)"
 t drill-board-vocab-stray-shipped-name-is-still-stray 1 "$(grep -cx stray-206 <<<"$BV_PRED" || true)"
 
@@ -2315,11 +2317,11 @@ bv_board_put 300 ready
 BV_SHIPPED_PRED="$(bv_drive '
   rehearsal_builder_left_the_queue owner/repo 300 && echo off-300 || echo on-300
   rehearsal_load_installed_queue_labels >/dev/null
-  echo "PATTERN=$REHEARSAL_QUEUE_LABEL_PATTERN"
+  echo "QUEUESET=$(paste -sd, - <<<"$REHEARSAL_QUEUE_LABELS")"
 ')"
 t drill-board-vocab-shipped-queue-holds 1 "$(grep -cx on-300 <<<"$BV_SHIPPED_PRED" || true)"
-t drill-board-vocab-shipped-queue-pattern 1 \
-  "$(grep -c '^PATTERN=blocked|claimed|epic|needs-triage|post-merge|ready$' <<<"$BV_SHIPPED_PRED" || true)"
+t drill-board-vocab-shipped-queue-set 1 \
+  "$(grep -cxF 'QUEUESET=blocked,claimed,epic,needs-triage,post-merge,ready' <<<"$BV_SHIPPED_PRED" || true)"
 
 # ...and a box whose configuration resolves no usable name REFUSES, like the
 # census's own read and for the same reason: a vocabulary half-minted under
