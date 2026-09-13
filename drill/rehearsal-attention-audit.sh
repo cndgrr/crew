@@ -484,8 +484,11 @@ rehearsal_attention_audit_clear_flags() {
     [ -n "$num" ] || continue
     # The name this leg SET, which is the box's own effective one: a DELETE
     # spelling the shipped `attention` on a renamed fleet 404s quietly and
-    # leaves both malformed shapes standing on the board.
-    gh api -X DELETE "repos/$repo/issues/$num/labels/$REHEARSAL_LABEL_ATTENTION" \
+    # leaves both malformed shapes standing on the board. The shipped name
+    # stays the fallback for the EXIT-trap path, which can be reached before
+    # the board read resolved anything — see rehearsal_attention_cleanup.
+    gh api -X DELETE \
+      "repos/$repo/issues/$num/labels/${REHEARSAL_LABEL_ATTENTION:-attention}" \
       >/dev/null 2>&1 || true
   done
   return 0

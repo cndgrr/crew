@@ -131,11 +131,16 @@ rehearsal_load_installed_queue_labels() {
 # `grep -qxE` against the effective set, so an issue triage moved into a
 # renamed `ready` satisfies it and one carrying only the shipped English name
 # on a renamed board does not.
+#
+# A here-string and not a pipe into `grep -q`, at this predicate and the two
+# below: `grep -q` exits on its first match and the producer takes SIGPIPE,
+# which under `set -o pipefail` makes the whole command red at random (#449).
+# The guard in shared/test/common.sh reds on the shape itself.
 rehearsal_stray_left_the_queue() {
-  local repo="$1" num="$2"
+  local repo="$1" num="$2" names
   [ -n "$REHEARSAL_QUEUE_LABEL_PATTERN" ] || return 1
-  gh api "repos/$repo/issues/$num" --jq '.labels[].name' \
-    | grep -qxE "$REHEARSAL_QUEUE_LABEL_PATTERN"
+  names="$(gh api "repos/$repo/issues/$num" --jq '.labels[].name')" || return 1
+  grep -qxE "$REHEARSAL_QUEUE_LABEL_PATTERN" <<<"$names"
 }
 
 rehearsal_load_installed_answer_mark() {
@@ -180,10 +185,10 @@ rehearsal_mint_attention_demand() {
 }
 
 rehearsal_attention_flag_cleared() {
-  local repo="$1" num="$2"
-  gh api "repos/$repo/issues/$num" \
-    --jq "[.labels[].name] | index(\"$REHEARSAL_LABEL_ATTENTION\") == null" \
-    | grep -qx true
+  local repo="$1" num="$2" out
+  out="$(gh api "repos/$repo/issues/$num" \
+    --jq "[.labels[].name] | index(\"$REHEARSAL_LABEL_ATTENTION\") == null")" || return 1
+  grep -qx true <<<"$out"
 }
 
 rehearsal_mint_post_merge_fixture() {
@@ -209,10 +214,10 @@ rehearsal_mint_builder_ready_fixture() {
 }
 
 rehearsal_builder_left_the_queue() {
-  local repo="$1" num="$2"
-  gh api "repos/$repo/issues/$num" \
-    --jq "[.labels[].name] | index(\"$REHEARSAL_LABEL_READY\") == null" \
-    | grep -qx true
+  local repo="$1" num="$2" out
+  out="$(gh api "repos/$repo/issues/$num" \
+    --jq "[.labels[].name] | index(\"$REHEARSAL_LABEL_READY\") == null")" || return 1
+  grep -qx true <<<"$out"
 }
 
 rehearsal_builder_slot_prs_from_json() {

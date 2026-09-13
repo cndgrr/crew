@@ -1265,14 +1265,17 @@ t attention-branch-reads-all-go-through-the-collector 2 \
 ATT_ISSUE_READY='{"labels":[{"name":"ready"}],"assignees":[]}'
 ATT_ISSUE_CLAIMED='{"labels":[{"name":"claimed"},{"name":"ready"}],"assignees":[]}'
 ATT_ISSUE_ASSIGNED='{"labels":[{"name":"ready"}],"assignees":[{"login":"drill-identity"}]}'
-if rehearsal_attention_is_ready_from_json "$ATT_ISSUE_READY" >/dev/null; then
+# The two names are ARGUMENTS now (#735): the swap is graded against whatever
+# the box resolved, so this file passes the shipped pair its fixtures are
+# written in rather than letting the grader assume them.
+if rehearsal_attention_is_ready_from_json "$ATT_ISSUE_READY" ready claimed >/dev/null; then
   r1=released
 else
   r1=WRONG
 fi
 t attention-dispatch-ready-holds released "$r1"
 ATT_OUT="$(att_row 'attention: dispatch left the issue ready' \
-  rehearsal_attention_is_ready_from_json "$ATT_ISSUE_CLAIMED")"
+  rehearsal_attention_is_ready_from_json "$ATT_ISSUE_CLAIMED" ready claimed)"
 t attention-dispatch-still-claimed-reds 1 \
   "$(grep -cFx 'FAIL attention: dispatch left the issue ready' <<<"$ATT_OUT")"
 t attention-dispatch-label-red-quotes-the-set 1 \
@@ -1529,6 +1532,12 @@ ATT_ALERTS_FIRST="⏱️ host: $ATT_PHRASE for $ATT_REPO#$ATT_ISSUE — session 
 att_half_stubs() {
   ok()   { printf 'ok   %s\n' "$1"; }
   fail() { printf 'FAIL %s\n' "$1"; }
+  # The board names rehearsal.sh resolves off the box before phase 2 mints
+  # anything, and refuses without (#735). Supplied here because the half's
+  # ready-swap row reads them, and a leg run with none resolved must red
+  # rather than fall back to this file's idea of what the board is called.
+  REHEARSAL_LABEL_READY=ready
+  REHEARSAL_LABEL_CLAIMED=claimed
   # rehearsal.sh's wait_for, minus the sleeping.
   wait_for() {
     local name="$2"; shift 2
@@ -4735,7 +4744,7 @@ t rehearsal-builder-fork-gate-precedes-first-tick 1 "$builder_fork_gate_precedes
 # Every object filer records the returned ID in the caller shell immediately;
 # this is what keeps failure paths from escaping the EXIT registry.
 t rehearsal-common-attention-fixture-is-recorded 1 \
-  "$(grep -A3 'inum=.*gh api' "$ROOT/drill/rehearsal.sh" | grep -c 'rehearsal_fixture_record_issue' | tr -d ' ')"
+  "$(grep -A3 'inum=.*rehearsal_mint_attention_demand' "$ROOT/drill/rehearsal.sh" | grep -c 'rehearsal_fixture_record_issue' | tr -d ' ')"
 # shellcheck disable=SC2016  # matching literal rehearsal variable references
 t rehearsal-triage-fixtures-are-recorded 2 \
   "$(grep -Ec 'rehearsal_fixture_record_issue "\$SANDBOX" "\$(t|p)num"' "$ROOT/drill/rehearsal.sh")"

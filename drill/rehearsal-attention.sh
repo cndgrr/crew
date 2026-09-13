@@ -762,7 +762,14 @@ rehearsal_attention_cleanup() {
   local repo="${REHEARSAL_ATTENTION_REPO:-}" num
   [ -n "$repo" ] && [ -n "${REHEARSAL_ATTENTION_ISSUES:-}" ] || return 0
   for num in $REHEARSAL_ATTENTION_ISSUES; do
-    gh api -X DELETE "repos/$repo/issues/$num/labels/$REHEARSAL_LABEL_ATTENTION" \
+    # The name this leg actually armed, which is the box's own effective one.
+    # `attention` stays the fallback for a cleanup reached through
+    # rehearsal.sh's EXIT trap before the board read resolved anything — every
+    # refusal above the mint takes that path — because a DELETE to
+    # `…/labels/` with an empty name disarms nothing at all. Same reasoning,
+    # same shape as rehearsal-breaker.sh's own cleanup.
+    gh api -X DELETE \
+      "repos/$repo/issues/$num/labels/${REHEARSAL_LABEL_ATTENTION:-attention}" \
       >/dev/null 2>&1 || true
     gh api -X PATCH "repos/$repo/issues/$num" -f state=closed \
       >/dev/null 2>&1 || true
