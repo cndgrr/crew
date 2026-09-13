@@ -2345,6 +2345,120 @@ t drill-board-vocab-unreadable-box-refuses 1 \
   "$(grep -c '^LOAD-RC=1$' <<<"$(bv_drive 'echo unreachable')" || true)"
 BV_HOME="$TMP/bv-box"
 
+# (e) THE RESOLVED NAME IS DATA, never a pattern and never jq source.
+#
+# Groups (a)-(d) move each name onto another plain English word, which is the
+# realistic rename and the one the spec names. It is not the only one an
+# operator can write: GitHub accepts `.`, `+`, `|` and `"` in a label name, and
+# every one of them means something to a regular expression or to a jq filter. A
+# predicate that interpolates a resolved name into either grades the operator's
+# DATA as CODE — and then answers about a board it never matched, which is this
+# issue's own defect pointed the other way rather than a separate one.
+#
+# So each shape is driven against the near-match it used to accept. The needles
+# here are `grep -cxF`, because they carry metacharacters themselves.
+
+# (e1) `.` is an ERE wildcard and `"` ends a jq string literal. One board
+# carries both, plus a `+` in the third name a fixture sends.
+bv_box_conf 'LABEL_READY="ready.v2"' "LABEL_ATTENTION='needs\"human'" "LABEL_CLAIMED='claimed+1'"
+bv_drive "$BV_PHASE2" >/dev/null
+t drill-board-vocab-meta-mint-names 1 \
+  "$(grep -cxF 'needs"human:d93f0b needs-triage:fbca04 ready.v2:0e8a16 claimed+1:1d76db blocked:b60205 post-merge:006b75 epic:5319e7' <<<"$(bv_vocab)" || true)"
+t drill-board-vocab-meta-fixture-labels 1 \
+  "$(grep -cxF 'needs"human post-merge ready.v2 claimed+1,needs"human needs"human,blocked' <<<"$(bv_mints)" || true)"
+bv_board_put 400 readyXv2        # the near-match the ERE wildcard used to accept
+bv_board_put 401 ready.v2        # ...and the name the box actually resolved
+bv_board_put 402 'needs"human'   # flagged, under a name that is not a jq string
+bv_board_put 403 attention       # ...and the shipped name, on this board
+# shellcheck disable=SC2016  # the snippet is eval'd by bv_drive, which is where it expands
+BV_META="$(bv_drive '
+  rehearsal_load_installed_queue_labels >/dev/null
+  echo "QUEUESET=$(paste -sd, - <<<"$REHEARSAL_QUEUE_LABELS")"
+  rehearsal_stray_left_the_queue owner/repo 400 && echo ruled-400 || echo stray-400
+  rehearsal_stray_left_the_queue owner/repo 401 && echo ruled-401 || echo stray-401
+  rehearsal_attention_flag_cleared owner/repo 402 && echo cleared-402 || echo armed-402
+  rehearsal_attention_flag_cleared owner/repo 403 && echo cleared-403 || echo armed-403
+  rehearsal_builder_left_the_queue owner/repo 400 && echo off-400 || echo on-400
+  rehearsal_builder_left_the_queue owner/repo 401 && echo off-401 || echo on-401
+')"
+t drill-board-vocab-meta-queue-set-carries-the-dotted-ready 1 \
+  "$(grep -cxF 'QUEUESET=blocked,claimed+1,epic,needs-triage,post-merge,ready.v2' <<<"$BV_META" || true)"
+# THE ROW THE WILDCARD FAILS: `readyXv2` is not a label this board has, so the
+# issue carrying it has not left the unlabelled queue. Joined into an ERE, it
+# did.
+t drill-board-vocab-meta-near-match-is-still-stray 1 "$(grep -cx stray-400 <<<"$BV_META" || true)"
+t drill-board-vocab-meta-exact-name-is-ruled 1 "$(grep -cx ruled-401 <<<"$BV_META" || true)"
+# ...and the jq half: the filter has to COMPILE against a quote-bearing name
+# before it can grade anything. Interpolated, it does not, and the predicate
+# then answers "still armed" about every board — including this one, which is
+# why the cleared row is the one that dies and the armed row is not.
+t drill-board-vocab-meta-quote-name-armed 1 "$(grep -cx armed-402 <<<"$BV_META" || true)"
+t drill-board-vocab-meta-quote-name-clear-ignores-shipped 1 \
+  "$(grep -cx cleared-403 <<<"$BV_META" || true)"
+t drill-board-vocab-meta-builder-queue-holds 1 "$(grep -cx on-401 <<<"$BV_META" || true)"
+t drill-board-vocab-meta-builder-near-match-left 1 "$(grep -cx off-400 <<<"$BV_META" || true)"
+
+# (e2) `|` is the join character itself, so a name carrying one re-partitions
+# the alternation and each fragment becomes a queue name the board does not
+# have. The same value carries the `"` that breaks the builder read's filter, so
+# one board drives both predicates against it.
+bv_box_conf "LABEL_READY='queued|ready\"x'"
+bv_board_put 410 queued            # a FRAGMENT of the resolved name, not a name
+bv_board_put 411 'queued|ready"x'  # ...the whole resolved name
+# shellcheck disable=SC2016  # the snippet is eval'd by bv_drive, which is where it expands
+BV_META_ALT="$(bv_drive '
+  rehearsal_load_installed_queue_labels
+  rehearsal_stray_left_the_queue owner/repo 410 && echo ruled-410 || echo stray-410
+  rehearsal_stray_left_the_queue owner/repo 411 && echo ruled-411 || echo stray-411
+  rehearsal_builder_left_the_queue owner/repo 410 && echo off-410 || echo on-410
+  rehearsal_builder_left_the_queue owner/repo 411 && echo off-411 || echo on-411
+')"
+# Six names still resolve: a `|` inside one of them is one name, not two.
+t drill-board-vocab-meta-alternation-resolves-six 1 \
+  "$(grep -c '^ok triage: installed queue-label set resolves six names$' <<<"$BV_META_ALT" || true)"
+t drill-board-vocab-meta-alternation-fragment-is-stray 1 \
+  "$(grep -cx stray-410 <<<"$BV_META_ALT" || true)"
+t drill-board-vocab-meta-alternation-whole-name-is-ruled 1 \
+  "$(grep -cx ruled-411 <<<"$BV_META_ALT" || true)"
+t drill-board-vocab-meta-quote-ready-off-the-queue 1 "$(grep -cx off-410 <<<"$BV_META_ALT" || true)"
+t drill-board-vocab-meta-quote-ready-holds 1 "$(grep -cx on-411 <<<"$BV_META_ALT" || true)"
+
+# (e3) A NAME CARRYING A NEWLINE is the shape emptiness cannot catch. Eight
+# emitted lines fill seven slots, so every slot below it is one place out and
+# the LAST value is dropped — leaving all seven non-empty, which is the one
+# state the whitespace guard never sees. The box's terminator is what catches
+# it, and the refusal says which shape it was. Two fleet.conf LINES, because
+# that is how a newline gets into a sourced value.
+bv_box_conf 'LABEL_READY="que' 'ued"'
+t drill-board-vocab-newline-name-refuses 1 \
+  "$(grep -c '^LOAD-RC=1$' <<<"$(bv_drive 'echo unreachable')" || true)"
+t drill-board-vocab-newline-refusal-names-the-shift 1 \
+  "$(grep -c '^REASON=.*seven names in seven lines.*one place out$' <<<"$(bv_drive 'echo unreachable')" || true)"
+
+# (e4) AND EVERY PREDICATE GRADED ON A NAME GUARDS AN UNRESOLVED ONE, rc 2.
+# `index("") == null` is true, so a predicate holding an empty name would report
+# the flag cleared, the queue left and the swap done — green on every correct
+# engine, for the reason the swap read's own comment gives. Unreachable in the
+# shipped tree, where the read refuses above the first mint and every caller is
+# below it; driven here because that is the only thing that makes it stay true.
+bv_box_conf
+bv_board_put 420 attention
+# shellcheck disable=SC2016  # the snippet is eval'd by bv_drive, which is where it expands
+BV_UNRESOLVED="$(bv_drive '
+  REHEARSAL_LABEL_ATTENTION=""
+  REHEARSAL_LABEL_READY=""
+  REHEARSAL_LABEL_CLAIMED=""
+  rehearsal_attention_flag_cleared owner/repo 420; echo "flag-rc=$?"
+  rehearsal_builder_left_the_queue owner/repo 420; echo "queue-rc=$?"
+  swap_out="$(rehearsal_attention_is_ready_from_json "$BV_JSON_MOVED")"; echo "swap-rc=$?"
+  echo "swap-out=$swap_out"
+')"
+t drill-board-vocab-unresolved-flag-returns-2 1 "$(grep -cx 'flag-rc=2' <<<"$BV_UNRESOLVED" || true)"
+t drill-board-vocab-unresolved-queue-returns-2 1 "$(grep -cx 'queue-rc=2' <<<"$BV_UNRESOLVED" || true)"
+t drill-board-vocab-unresolved-swap-returns-2 1 "$(grep -cx 'swap-rc=2' <<<"$BV_UNRESOLVED" || true)"
+t drill-board-vocab-unresolved-swap-names-the-gap 1 \
+  "$(grep -cxF 'swap-out=<no effective ready/claimed name resolved off the box>' <<<"$BV_UNRESOLVED" || true)"
+
 # --- the breaker leg grades only what it CONFIRMED (#724) --------------------
 #
 # The 0.1.3-rc2 round failed seven breaker assertions on `triage` and six on
