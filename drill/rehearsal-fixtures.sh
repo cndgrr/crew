@@ -3,12 +3,108 @@
 # separate so their failure cases can be exercised without credentials or a
 # host-side drill box.
 
+# --- the board vocabulary, read off the box (#735) ----------------------------
+#
+# Every LABEL_* is operator-configurable. load_fleet_conf sources
+# fleet.defaults.conf, then fleet.conf OVER it, and restores exactly six values
+# afterwards — the MARK_* wire protocol (shared/lib/common/conf.sh:13-25). Not
+# one LABEL_* is in that set, so an operator file genuinely moves every name in
+# shared/conf/fleet.defaults.conf, and the engine then reads the moved one:
+# duty_attention fetches `labels=$LABEL_ATTENTION` (duty-attention.sh:115) and
+# the triage module grades the queue on the six queue names (duty-triage.sh).
+#
+# So the drill has to mint and match the same names. A fixture minted with the
+# shipped English `attention` on a box that moved it is a demand the engine
+# never fetches: the phase-2 wake spends its 900 seconds and reds on a correct
+# engine. Same read, same shape as the attention census's own
+# (rehearsal-safety.sh:483-518) — defaults, then fleet.conf over them, in ONE
+# call per box.
+#
+# MARK_* is deliberately NOT read here. The marks are a wire protocol the
+# loader restores over any operator file, and rehearsal_attention_census_take
+# and rehearsal_load_installed_answer_mark below read them from the defaults
+# ALONE for that reason. Resolving a mark through fleet.conf would key an
+# assertion on a mark the engine never writes with.
+REHEARSAL_LABEL_ATTENTION=""
+REHEARSAL_LABEL_NEEDS_TRIAGE=""
+REHEARSAL_LABEL_READY=""
+REHEARSAL_LABEL_CLAIMED=""
+REHEARSAL_LABEL_BLOCKED=""
+REHEARSAL_LABEL_POST_MERGE=""
+REHEARSAL_LABEL_EPIC=""
+REHEARSAL_BOARD_LABEL_REASON=""
+
+# Read positionally, never through `sed '/^$/d'`: a box that resolves no
+# LABEL_BLOCKED must leave REHEARSAL_LABEL_BLOCKED empty and be refused for
+# that, not shift LABEL_POST_MERGE up into its slot and mint a board whose
+# names are silently one place out.
+rehearsal_load_installed_board_labels() {
+  local conf name value missing=""
+  REHEARSAL_BOARD_LABEL_REASON=""
+  # shellcheck disable=SC2016  # every name expands inside the box
+  conf="$(bx 'set -a
+              . ~/duty/conf/fleet.defaults.conf
+              [ ! -f ~/duty/conf/fleet.conf ] || . ~/duty/conf/fleet.conf
+              printf "%s\n" "$LABEL_ATTENTION" "$LABEL_NEEDS_TRIAGE" \
+                "$LABEL_READY" "$LABEL_CLAIMED" "$LABEL_BLOCKED" \
+                "$LABEL_POST_MERGE" "$LABEL_EPIC"' | tr -d '\r')" || conf=""
+  {
+    IFS= read -r REHEARSAL_LABEL_ATTENTION
+    IFS= read -r REHEARSAL_LABEL_NEEDS_TRIAGE
+    IFS= read -r REHEARSAL_LABEL_READY
+    IFS= read -r REHEARSAL_LABEL_CLAIMED
+    IFS= read -r REHEARSAL_LABEL_BLOCKED
+    IFS= read -r REHEARSAL_LABEL_POST_MERGE
+    IFS= read -r REHEARSAL_LABEL_EPIC
+  } <<<"$conf" || true
+  # A name carrying whitespace is refused rather than half-supported, for
+  # rehearsal-breaker.sh:117-122's reason: GitHub accepts one and every
+  # `grep -qx`, `-f "labels[]=…"` and jq needle downstream would have to agree
+  # about the quoting, so the drill declines to guess on the operator's behalf.
+  for name in ATTENTION NEEDS_TRIAGE READY CLAIMED BLOCKED POST_MERGE EPIC; do
+    eval "value=\$REHEARSAL_LABEL_$name"
+    case "$value" in
+      '')             missing="$missing${missing:+, }LABEL_$name" ;;
+      *[[:space:]]*)  missing="$missing${missing:+, }LABEL_$name (whitespace)" ;;
+    esac
+  done
+  [ -z "$missing" ] || {
+    REHEARSAL_BOARD_LABEL_REASON="the box's installed configuration resolved no usable $missing"
+    return 1
+  }
+}
+
+# The whole board vocabulary, minted under the names the box will actually
+# grade. The COLOURS stay literal: no colour is configurable, so only the name
+# side of each pair moves.
+rehearsal_mint_board_vocabulary() {
+  local repo="$1"
+  set -- \
+    "$REHEARSAL_LABEL_ATTENTION"    d93f0b \
+    "$REHEARSAL_LABEL_NEEDS_TRIAGE" fbca04 \
+    "$REHEARSAL_LABEL_READY"        0e8a16 \
+    "$REHEARSAL_LABEL_CLAIMED"      1d76db \
+    "$REHEARSAL_LABEL_BLOCKED"      b60205 \
+    "$REHEARSAL_LABEL_POST_MERGE"   006b75 \
+    "$REHEARSAL_LABEL_EPIC"         5319e7
+  while [ "$#" -gt 0 ]; do
+    gh api "repos/$repo/labels" -f name="$1" -f color="$2" >/dev/null 2>&1 || true
+    shift 2
+  done
+}
+
 rehearsal_load_installed_queue_labels() {
   local count
+  # fleet.conf OVER the defaults (#735 D2). The engine grades the queue on the
+  # effective names, so the pattern QUEUE_LABEL_PATTERN builds from this set —
+  # the one the stray-ruling assertion greps an issue's labels against — has to
+  # be built from them too. Six is still the count: a fleet.conf that collides
+  # two names onto one string resolves five through `sort -u` and reds here.
   # shellcheck disable=SC2016  # the label variables expand inside the box
   REHEARSAL_QUEUE_LABELS="$(bx '
     set -a
     . ~/duty/conf/fleet.defaults.conf
+    [ ! -f ~/duty/conf/fleet.conf ] || . ~/duty/conf/fleet.conf
     printf "%s\n" \
       "$LABEL_READY" "$LABEL_CLAIMED" "$LABEL_BLOCKED" \
       "$LABEL_POST_MERGE" "$LABEL_EPIC" "$LABEL_NEEDS_TRIAGE"
@@ -41,6 +137,65 @@ rehearsal_load_installed_answer_mark() {
   # shellcheck disable=SC2034  # sourced global consumed by rehearsal.sh
   REHEARSAL_MARK_ANSWERED="$mark"
   ok "builder: installed round-answer mark resolves"
+}
+
+# --- phase-2's own fixtures, and the predicates that read them back -----------
+#
+# Sourceable for this file's stated reason: the three mints below and the three
+# predicates that grade them are the sites #735 moved off the shipped English
+# names, and a mint that asks for one name while its predicate matches another
+# cannot be caught by reading either half. Each pair is driven against a stub
+# board in shared/test/drill.sh instead. Every one prints its issue number on
+# stdout or matches on the box's own effective name; none of them spells a
+# board label.
+#
+# `grep -qx true` rather than a bare `--jq` comparison, at every predicate:
+# `gh api --jq` prints NOTHING when the filter yields null (real jq prints
+# "null"), so testing the raw output for a literal could never match — label
+# present emitted "0", label absent emitted "", and the check failed in BOTH
+# states. Comparing inside the filter puts a token on stdout either way.
+
+rehearsal_mint_attention_demand() {
+  local repo="$1" identity="$2" title="$3" body="$4"
+  gh api "repos/$repo/issues" -f title="$title" -f body="$body" \
+    -f "assignees[]=$identity" \
+    -f "labels[]=$REHEARSAL_LABEL_ATTENTION" --jq .number
+}
+
+rehearsal_attention_flag_cleared() {
+  local repo="$1" num="$2"
+  gh api "repos/$repo/issues/$num" \
+    --jq "[.labels[].name] | index(\"$REHEARSAL_LABEL_ATTENTION\") == null" \
+    | grep -qx true
+}
+
+rehearsal_mint_post_merge_fixture() {
+  local repo="$1" title="$2" body="$3"
+  gh api "repos/$repo/issues" -f title="$title" -f body="$body" \
+    -f "labels[]=$REHEARSAL_LABEL_POST_MERGE" --jq .number
+}
+
+# The fixture's labels are unchanged AND they are still the single post-merge
+# name — the second half is what makes the first mean something, because a
+# session that stripped the label and a board that never had it read alike.
+rehearsal_post_merge_labels_intact() {
+  local repo="$1" num="$2" before="$3" now
+  now="$(gh api "repos/$repo/issues/$num" --jq '[.labels[].name] | sort | join(" ")')" \
+    || return 1
+  [ "$now" = "$before" ] && [ "$before" = "$REHEARSAL_LABEL_POST_MERGE" ]
+}
+
+rehearsal_mint_builder_ready_fixture() {
+  local repo="$1" title="$2" body="$3"
+  gh api "repos/$repo/issues" -f title="$title" -f body="$body" \
+    -f "labels[]=$REHEARSAL_LABEL_READY" --jq .number
+}
+
+rehearsal_builder_left_the_queue() {
+  local repo="$1" num="$2"
+  gh api "repos/$repo/issues/$num" \
+    --jq "[.labels[].name] | index(\"$REHEARSAL_LABEL_READY\") == null" \
+    | grep -qx true
 }
 
 rehearsal_builder_slot_prs_from_json() {

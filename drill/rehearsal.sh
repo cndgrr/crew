@@ -682,9 +682,21 @@ else
   # Create the whole board vocabulary. Triage reads its queue-label set from
   # the installed configuration below, while the builder keys on ready. A
   # missing label makes a fixture silently unbuildable.
-  for _lbl in attention:d93f0b needs-triage:fbca04 ready:0e8a16 claimed:1d76db blocked:b60205 post-merge:006b75 epic:5319e7; do
-    gh api "repos/$SANDBOX/labels" -f name="${_lbl%%:*}" -f color="${_lbl##*:}" >/dev/null 2>&1 || true
-  done
+  #
+  # The NAMES come off the box first (#735). Every LABEL_* is
+  # operator-configurable, so minting the shipped English set on a fleet that
+  # moved one describes a board the engine will not grade — and the refusal is
+  # here, above the first mint, because a vocabulary half-minted under names
+  # nothing resolved is a fixture problem every row below would be blamed for.
+  if ! rehearsal_load_installed_board_labels; then
+    echo
+    echo "REFUSING before a phase 2 tick: $REHEARSAL_BOARD_LABEL_REASON, so the"
+    echo "board vocabulary cannot be minted under the names this box grades. The"
+    echo "engine reads the effective LABEL_* set; a drill that mints the shipped"
+    echo "English names instead asserts against a board nobody is looking at."
+    exit 1
+  fi
+  rehearsal_mint_board_vocabulary "$SANDBOX"
   if ! gh api "repos/$SANDBOX/collaborators/$ME2" >/dev/null 2>&1; then
     gh api -X PUT "repos/$SANDBOX/collaborators/$ME2" -f permission=push >/dev/null 2>&1 || true
     bx "gh api /user/repository_invitations --jq '.[] | select(.repository.full_name == \"$SANDBOX\") | .id' \
@@ -719,9 +731,9 @@ else
   # leg's — because it is also what captures duty.log's length, and D3's
   # "no attention session outside the sandbox" assertion reads only the lines
   # written after that mark.
-  inum="$(gh api "repos/$SANDBOX/issues" -f title="drill: attention wake $(date -u +%H%M%S)" \
-    -f body="Drill demand: reply with exactly one short comment acknowledging this drill, then stop. Do not open PRs." \
-    -f "assignees[]=$ME2" -f "labels[]=attention" --jq .number)"
+  inum="$(rehearsal_mint_attention_demand "$SANDBOX" "$ME2" \
+    "drill: attention wake $(date -u +%H%M%S)" \
+    "Drill demand: reply with exactly one short comment acknowledging this drill, then stop. Do not open PRs.")"
   rehearsal_fixture_record_issue "$SANDBOX" "$inum"
 
   # The surface repos.txt cannot bound, RECORDED rather than refused (#714).
@@ -769,12 +781,13 @@ else
   bx "~/duty/bin/tick.sh" || true
   wait_for 900 "attention: 📌 pickup comment" bash -c \
     "out=\$(gh api 'repos/$SANDBOX/issues/$inum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length'); grep -qE '^[1-9][0-9]*$' <<<\"\$out\""
-  # `gh api --jq` prints NOTHING when the filter yields null (real jq prints
-  # "null"), so testing for the literal string could never match: label
-  # present emitted "0", label absent emitted "". The check failed in BOTH
-  # states. Compare inside the filter so a token reaches the shell either way.
-  wait_for 300 "attention: label removed (ack re-arms)" bash -c \
-    "out=\$(gh api 'repos/$SANDBOX/issues/$inum' --jq '[.labels[].name] | index(\"attention\") == null'); grep -qx true <<<\"\$out\""
+  # The predicate lives in rehearsal-fixtures.sh beside the mint it grades, and
+  # carries the `grep -qx true` reasoning with it: `gh api --jq` prints NOTHING
+  # when the filter yields null (real jq prints "null"), so testing for the
+  # literal string could never match — label present emitted "0", label absent
+  # emitted "", and the check failed in BOTH states.
+  wait_for 300 "attention: label removed (ack re-arms)" \
+    rehearsal_attention_flag_cleared "$SANDBOX" "$inum"
 
   # The census's other half (#714, D2/D3). Deliberately AFTER the two rows
   # above: they are what establishes that a tick fetched, partitioned and
@@ -833,9 +846,9 @@ else
   # A post-merge issue is already in a valid terminal queue state. Leave it
   # as the only non-conforming-looking fixture, then prove a complete tick
   # neither spends a session on it nor mutates it.
-  pnum="$(gh api "repos/$SANDBOX/issues" -f title="drill: triage post-merge $(date -u +%H%M%S)" \
-    -f body="Drill fixture: this issue is already in post-merge. Do not comment on it or change its labels." \
-    -f "labels[]=post-merge" --jq .number)"
+  pnum="$(rehearsal_mint_post_merge_fixture "$SANDBOX" \
+    "drill: triage post-merge $(date -u +%H%M%S)" \
+    "Drill fixture: this issue is already in post-merge. Do not comment on it or change its labels.")"
   rehearsal_fixture_record_issue "$SANDBOX" "$pnum"
   PCOMMENTS="$(gh api "repos/$SANDBOX/issues/$pnum/comments" --jq 'length')"
   PLABELS="$(gh api "repos/$SANDBOX/issues/$pnum" --jq '[.labels[].name] | sort | join(" ")')"
@@ -844,8 +857,8 @@ else
   sleep 20
   check "triage: post-merge drew no comment" bash -c \
     "[ \"\$(gh api 'repos/$SANDBOX/issues/$pnum/comments' --jq 'length')\" = '$PCOMMENTS' ]"
-  check "triage: post-merge kept its single label" bash -c \
-    "[ \"\$(gh api 'repos/$SANDBOX/issues/$pnum' --jq '[.labels[].name] | sort | join(\" \")')\" = '$PLABELS' ] && [ '$PLABELS' = 'post-merge' ]"
+  check "triage: post-merge kept its single label" \
+    rehearsal_post_merge_labels_intact "$SANDBOX" "$pnum" "$PLABELS"
   check "triage: post-merge-only tick launched no session" bx \
     "out=\$(tail -n +$((DUTY_LOG_LINES + 1)) ~/duty/duty.log); grep -Fq '$SANDBOX: quiet — no mentions, no triage signals, no session launched' <<<\"\$out\""
 
@@ -890,9 +903,9 @@ else
     # roster authored in crew.
     check "builder: fixture panel names the host reviewer" \
       rehearsal_install_builder_fixture_panel "$SANDBOX" "$ME2" "$HOST_ME"
-    bnum="$(gh api "repos/$SANDBOX/issues" -f title="drill: build me $(date -u +%H%M%S)" \
-      -f body="Drill fixture: add a file named drill-build.txt at the repo root containing one line. Open a PR. Keep it to that one change." \
-      -f "labels[]=ready" --jq .number)"
+    bnum="$(rehearsal_mint_builder_ready_fixture "$SANDBOX" \
+      "drill: build me $(date -u +%H%M%S)" \
+      "Drill fixture: add a file named drill-build.txt at the repo root containing one line. Open a PR. Keep it to that one change.")"
     rehearsal_fixture_record_builder_issue "$SANDBOX" "$ME2" "$bnum"
     check "builder fixture is unassigned (ready+assigned is not pickable)" bash -c \
       "out=\$(gh api 'repos/$SANDBOX/issues/$bnum' --jq '.assignees | length'); grep -qx 0 <<<\"\$out\""
@@ -910,8 +923,8 @@ else
       fail "builder: PR authored by $ME2 for this run's fixture issue"
     fi
     # The claim must be visible on the board, not just in the PR.
-    wait_for 300 "builder: issue moved off ready (claimed)" bash -c \
-      "out=\$(gh api 'repos/$SANDBOX/issues/$bnum' --jq '[.labels[].name] | index(\"ready\") == null'); grep -qx true <<<\"\$out\""
+    wait_for 300 "builder: issue moved off ready (claimed)" \
+      rehearsal_builder_left_the_queue "$SANDBOX" "$bnum"
     # Re-tick must not phantom-rebuild: this issue still resolves to one PR.
     BPR="$bpr"
     bx "~/duty/bin/tick.sh" || true
