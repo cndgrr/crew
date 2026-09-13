@@ -819,7 +819,6 @@ else
     echo "triage: installed queue-label set is empty — refusing before the fixture wait" >&2
     exit 1
   fi
-  QUEUE_LABEL_PATTERN="$(printf '%s\n' "$REHEARSAL_QUEUE_LABELS" | paste -sd'|' -)"
   # -- triage: a stray (no queue label) must draw a ruling --
   # duty-triage.sh detects two signals; the STRAY is the one a fixture can
   # create without presupposing triage's own vocabulary: an open issue
@@ -833,9 +832,11 @@ else
   bx "~/duty/bin/tick.sh" || true
   wait_for 900 "triage: stray drew a ruling comment" bash -c \
     "out=\$(gh api 'repos/$SANDBOX/issues/$tnum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length'); grep -qE '^[1-9][0-9]*$' <<<\"\$out\""
-  # The board invariant: no open issue may remain queue-unlabelled.
-  wait_for 300 "triage: stray left the unlabelled queue" bash -c \
-    "out=\$(gh api 'repos/$SANDBOX/issues/$tnum' --jq '.labels[].name'); grep -qxE '$QUEUE_LABEL_PATTERN' <<<\"\$out\""
+  # The board invariant: no open issue may remain queue-unlabelled. The pattern
+  # is built by the loader above, off the box's EFFECTIVE queue names, and read
+  # by the predicate rather than re-derived here.
+  wait_for 300 "triage: stray left the unlabelled queue" \
+    rehearsal_stray_left_the_queue "$SANDBOX" "$tnum"
   # Same tick, second time: triage must not re-rule a settled issue.
   TCOMMENTS="$(gh api "repos/$SANDBOX/issues/$tnum/comments" --jq 'length')"
   bx "~/duty/bin/tick.sh" || true

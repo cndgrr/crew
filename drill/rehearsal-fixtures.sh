@@ -33,6 +33,7 @@ REHEARSAL_LABEL_BLOCKED=""
 REHEARSAL_LABEL_POST_MERGE=""
 REHEARSAL_LABEL_EPIC=""
 REHEARSAL_BOARD_LABEL_REASON=""
+REHEARSAL_QUEUE_LABEL_PATTERN=""
 
 # Read positionally, never through `sed '/^$/d'`: a box that resolves no
 # LABEL_BLOCKED must leave REHEARSAL_LABEL_BLOCKED empty and be refused for
@@ -96,9 +97,9 @@ rehearsal_mint_board_vocabulary() {
 rehearsal_load_installed_queue_labels() {
   local count
   # fleet.conf OVER the defaults (#735 D2). The engine grades the queue on the
-  # effective names, so the pattern QUEUE_LABEL_PATTERN builds from this set —
-  # the one the stray-ruling assertion greps an issue's labels against — has to
-  # be built from them too. Six is still the count: a fleet.conf that collides
+  # effective names, so the pattern built from this set below — the one the
+  # stray-ruling assertion greps an issue's labels against — has to be built
+  # from them too. Six is still the count: a fleet.conf that collides
   # two names onto one string resolves five through `sort -u` and reds here.
   # shellcheck disable=SC2016  # the label variables expand inside the box
   REHEARSAL_QUEUE_LABELS="$(bx '
@@ -109,6 +110,11 @@ rehearsal_load_installed_queue_labels() {
       "$LABEL_READY" "$LABEL_CLAIMED" "$LABEL_BLOCKED" \
       "$LABEL_POST_MERGE" "$LABEL_EPIC" "$LABEL_NEEDS_TRIAGE"
   ' | sed '/^$/d' | sort -u)"
+  # Built here rather than at the call site, so the pattern the stray assertion
+  # greps against and the set it is derived from cannot drift apart — and so a
+  # fixture can read the pattern itself instead of re-deriving it and passing
+  # under its own mutation.
+  REHEARSAL_QUEUE_LABEL_PATTERN="$(printf '%s\n' "$REHEARSAL_QUEUE_LABELS" | paste -sd'|' -)"
   count="$(printf '%s\n' "$REHEARSAL_QUEUE_LABELS" | sed '/^$/d' | wc -l | tr -d ' ')"
   if [ "$count" -eq 6 ]; then
     ok "triage: installed queue-label set resolves six names"
@@ -119,6 +125,17 @@ rehearsal_load_installed_queue_labels() {
   printf '%s\n' "$REHEARSAL_QUEUE_LABELS" | sed 's/^/  /'
   fail "triage: installed queue-label set resolves six names"
   return 1
+}
+
+# The board invariant, read back: no open issue may remain queue-unlabelled.
+# `grep -qxE` against the effective set, so an issue triage moved into a
+# renamed `ready` satisfies it and one carrying only the shipped English name
+# on a renamed board does not.
+rehearsal_stray_left_the_queue() {
+  local repo="$1" num="$2"
+  [ -n "$REHEARSAL_QUEUE_LABEL_PATTERN" ] || return 1
+  gh api "repos/$repo/issues/$num" --jq '.labels[].name' \
+    | grep -qxE "$REHEARSAL_QUEUE_LABEL_PATTERN"
 }
 
 rehearsal_load_installed_answer_mark() {
