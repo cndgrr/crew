@@ -1992,6 +1992,604 @@ t drill-attention-census-no-label-refuses 1 \
   "$(grep -c '^TAKE-RC=1$' <<<"$(att_drive take)" || true)"
 ATT_LABEL_CONF="attention"
 
+# --- the board vocabulary is the box's, not this file's (#735) ---------------
+#
+# The sibling of group (i), one layer out. That group proved the attention
+# CENSUS asks the endpoint for the box's own effective LABEL_ATTENTION; the
+# drill's other half — the mints, the waits, the predicates, the cleanup
+# DELETEs and the triage queue pattern — still spelled the shipped English
+# names. Two halves of one round disagreeing about where a label name comes
+# from, and only one of them saying so.
+#
+# Every LABEL_* is operator-configurable: load_fleet_conf restores exactly the
+# six MARK_* wire values over fleet.conf (shared/lib/common/conf.sh:13-25) and
+# not one label is among them. On a fleet whose operator moved a name, a
+# fixture minted under the shipped one is a demand the engine never fetches —
+# the phase-2 wake spends its 900 seconds and reds on a CORRECT engine — and a
+# queue pattern built from shipped names grades the stray assertion against
+# labels the session was never asked to use.
+#
+# THE BOX IS REAL: both configuration files exist under BV_HOME and the shipped
+# read is executed against them through a HOME-scoped bash, so a mint and a
+# predicate that disagree about which file wins are killed on behaviour rather
+# than pinned by a grep for source text. The DEFAULTS are the repository's own
+# shared/conf/fleet.defaults.conf, so group (d) asserts the names crew actually
+# ships rather than a copy of them that can drift.
+BV_HOME="$TMP/bv-box"
+BV_TRACE="$TMP/bv-trace"
+BV_BOARD="$TMP/bv-board"
+BV_NEXT=100
+
+bv_note() { printf '%s\n' "$1" >>"$BV_TRACE"; }
+
+# bv_box_conf [FLEET_CONF_LINE...] — the shipped defaults, plus an operator
+# file only when one is asked for. With no argument the box has no fleet.conf,
+# which is group (d) and is the configuration every round to date has run on.
+bv_box_conf() {
+  rm -rf "$BV_HOME"
+  mkdir -p "$BV_HOME/duty/conf"
+  cp "$ROOT/shared/conf/fleet.defaults.conf" "$BV_HOME/duty/conf/fleet.defaults.conf"
+  [ "$#" -eq 0 ] || printf '%s\n' "$@" >"$BV_HOME/duty/conf/fleet.conf"
+  : >"$BV_TRACE"
+  : >"$BV_BOARD"
+}
+
+# A REAL BOX RUNS THE COMMAND IN A FRESH SHELL — `box exec … bash -lc` — so the
+# composed read is run rather than eval'd inside this suite, for the reason
+# att_bx states at length. Anything else is a box that declines, which is what
+# the refusal rows are about.
+#
+# BV_CRLF=1 makes the box answer in CRLF, which is the transport and not the
+# operator: `box exec` hands the guest's stdout back through a channel that may
+# translate line endings, which is the only reason the reads strip a CR at all.
+# Group (e6) is the pair of rows that keeps that strip as narrow as it is.
+BV_CRLF=0
+bv_bx() {
+  case "$1" in
+    *fleet.defaults.conf*)
+      if [ "$BV_CRLF" = 1 ]; then
+        ( HOME="$BV_HOME"; bash -c "$1" 2>/dev/null ) | sed 's/$/\r/'
+      else
+        ( HOME="$BV_HOME"; bash -c "$1" 2>/dev/null )
+      fi ;;
+    *) return 1 ;;
+  esac
+}
+
+# The board, as a table of `<number> <labels-csv>` lines. Appended rather than
+# rewritten, and read newest-last, so a label added after a mint is visible to
+# the next read without this fixture needing an in-place edit.
+bv_board_put()    { printf '%s %s\n' "$1" "$2" >>"$BV_BOARD"; }
+bv_board_labels() { awk -v n="$1" '$1 == n { v = $2 } END { print v }' "$BV_BOARD"; }
+
+# `gh --jq` MARSHALS the value: a filter yielding null prints NOTHING, where
+# real jq prints "null". Modelled rather than approximated, because it is why no
+# predicate under test reads a boolean back through `--jq` — one that did would
+# see "" for both answers — and because the `.number` and `join(" ")` reads that
+# DO go through it would otherwise pass here on output a drill never produces.
+# A read with no filter hands back the whole issue JSON, which is what the two
+# `jq -e --arg` predicates grade.
+bv_emit() {
+  local json="$1" filter="${2:-}"
+  if [ -z "$filter" ]; then printf '%s\n' "$json"; return 0; fi
+  jq -r "$filter" <<<"$json" 2>/dev/null | sed '/^null$/d'
+}
+
+bv_gh() {
+  local url="" method=GET filter="" field name="" color="" labels="" num prev
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      api) shift ;;
+      -X) method="$2"; shift 2 ;;
+      --jq) filter="$2"; shift 2 ;;
+      --paginate) shift ;;
+      -f)
+        field="$2"; shift 2
+        case "$field" in
+          'labels[]='*) labels="${labels:+$labels,}${field#labels[]=}" ;;
+          name=*)  name="${field#name=}" ;;
+          color=*) color="${field#color=}" ;;
+        esac ;;
+      *) url="$1"; shift ;;
+    esac
+  done
+  # Traced by URL, not by field: the label cleanup DELETEs is in the PATH, so a
+  # `-f`-only trace cannot see which name the leg is disarming.
+  case "$method:$url" in
+    DELETE:*) bv_note "delete:$url"; return 0 ;;
+    PUT:*)    return 0 ;;
+  esac
+  case "$url" in
+    */labels)
+      if [ -n "$name" ]; then
+        # The vocabulary mint. Colour traced beside the name, because D3 says
+        # only the name side moves and a patch that resolved the colour too
+        # would otherwise read green.
+        bv_note "mint-label:$name:$color"
+      else
+        num="${url%/labels}"; num="${num##*/}"
+        prev="$(bv_board_labels "$num")"
+        bv_board_put "$num" "${prev:+$prev,}$labels"
+        bv_note "add-label:$num:$labels"
+      fi ;;
+    */issues)
+      num="$BV_NEXT"; BV_NEXT=$((BV_NEXT + 1))
+      bv_board_put "$num" "$labels"
+      bv_note "mint:$num:$labels"
+      [ "$filter" != .number ] || printf '%s\n' "$num" ;;
+    # Traced apart from the issue mints: a pull request is created carrying no
+    # labels and flagged afterwards through the add endpoint, so folding it in
+    # would put an empty row in the middle of the fixture-label sequence.
+    */pulls)
+      num="$BV_NEXT"; BV_NEXT=$((BV_NEXT + 1))
+      bv_board_put "$num" ""
+      bv_note "mint-pr:$num"
+      [ "$filter" != .number ] || printf '%s\n' "$num" ;;
+    */git/ref/heads/*)
+      bv_emit '{"object":{"sha":"1111111111111111111111111111111111111111"}}' "$filter" ;;
+    */git/refs) ;;
+    */issues/*)
+      num="${url##*/}"
+      case "$num" in ''|*[!0-9]*) return 1 ;; esac
+      bv_emit "$(jq -nc --arg l "$(bv_board_labels "$num")" \
+        '{labels: ($l | split(",") | map(select(length > 0) | {name: .}))}')" "$filter" ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+
+# bv_drive SNIPPET — source the three legs, resolve the board vocabulary off
+# the fixture box, then run the snippet against it. Everything the snippet
+# touches is subshell-local, so a drive's result is its stdout and the files it
+# wrote. A read that refuses prints LOAD-RC and runs nothing, which is the
+# refusal rehearsal.sh turns into its exit-1 above the first mint.
+# shellcheck disable=SC2317  # the stubs are reached only through the legs, which shellcheck cannot follow
+bv_drive() {
+  (
+    # shellcheck source=drill/rehearsal-fixtures.sh
+    . "$ROOT/drill/rehearsal-fixtures.sh"
+    # shellcheck source=drill/rehearsal-attention.sh
+    . "$ROOT/drill/rehearsal-attention.sh"
+    # shellcheck source=drill/rehearsal-attention-audit.sh
+    . "$ROOT/drill/rehearsal-attention-audit.sh"
+    bx()   { bv_bx "$1"; }
+    gh()   { bv_gh "$@"; }
+    ok()   { echo "ok $1"; }
+    fail() { echo "FAIL $1"; }
+    rehearsal_load_installed_board_labels || {
+      echo "LOAD-RC=$?"
+      echo "REASON=$REHEARSAL_BOARD_LABEL_REASON"
+      exit 0
+    }
+    eval "$1"
+  )
+}
+
+# The phase-2 fixture path, in the drill's own order: the vocabulary, the
+# attention demand, the triage post-merge fixture, the builder's ready issue,
+# the attention leg's claimed+flagged demand, the audit leg's two malformed
+# shapes, then both disarming cleanups. Every mint and every DELETE in one
+# trace, so a site left literal is visible as a wrong name rather than as a
+# missing row somewhere else.
+# shellcheck disable=SC2016  # the snippet is eval'd by bv_drive, which is where it expands
+BV_PHASE2='
+  rehearsal_mint_board_vocabulary owner/repo
+  inum="$(rehearsal_mint_attention_demand owner/repo box-identity t b)"
+  rehearsal_mint_post_merge_fixture owner/repo t b >/dev/null
+  rehearsal_mint_builder_ready_fixture owner/repo t b >/dev/null
+  rehearsal_attention_file_fixture owner/repo box-identity t b
+  rehearsal_attention_audit_file_fixtures owner/repo stamp
+  rehearsal_attention_close_fixture owner/repo "$inum"
+  rehearsal_attention_cleanup
+  rehearsal_attention_audit_clear_flags
+'
+bv_minted()  { grep -c "^mint:[0-9]*:$1\$" "$BV_TRACE" || true; }
+bv_vocab()   { grep '^mint-label:' "$BV_TRACE" | sed 's/^mint-label://' | paste -sd' ' -; }
+bv_mints()   { grep '^mint:' "$BV_TRACE" | sed 's/^mint:[0-9]*://' | paste -sd' ' -; }
+bv_deletes() { grep '^delete:' "$BV_TRACE" | sed 's|^delete:.*/labels/||' | sort -u | paste -sd' ' -; }
+
+# (a) THE OPERATOR MOVED TWO NAMES, and every mint asks for the moved one.
+#
+# LABEL_ATTENTION and LABEL_READY, the two the spec names: the first is what
+# duty_attention fetches, the second is what the builder's queue keys on, and
+# between them they cover the role-independent half and both role blocks.
+bv_box_conf 'LABEL_ATTENTION="needs-human"' 'LABEL_READY="queued"'
+# Driven for its TRACE, not its rows: every assertion below reads the requests
+# the path made, which is the only place a mint's label name is observable.
+bv_drive "$BV_PHASE2" >/dev/null
+t drill-board-vocab-moved-mint-names 1 \
+  "$(grep -c '^needs-human:d93f0b needs-triage:fbca04 queued:0e8a16 claimed:1d76db blocked:b60205 post-merge:006b75 epic:5319e7$' <<<"$(bv_vocab)" || true)"
+# ...and the FIXTURES, in order: the attention demand, post-merge, the ready
+# issue, the claimed+flagged demand, the audit's unassigned issue, its PR.
+t drill-board-vocab-moved-fixture-labels 1 \
+  "$(grep -c '^needs-human post-merge queued claimed,needs-human needs-human,blocked$' <<<"$(bv_mints)" || true)"
+t drill-board-vocab-moved-attention-demand 1 "$(bv_minted needs-human)"
+t drill-board-vocab-moved-ready-fixture 1 "$(bv_minted queued)"
+# The audit leg labels its PR through the add endpoint, not at creation.
+t drill-board-vocab-moved-pr-flag 1 \
+  "$(grep -c '^add-label:[0-9]*:needs-human$' "$BV_TRACE" || true)"
+# ...and every disarming DELETE names the label the leg actually SET. A cleanup
+# spelling `attention` here 404s quietly and leaves the board armed.
+t drill-board-vocab-moved-cleanup-deletes 1 \
+  "$(grep -c '^needs-human$' <<<"$(bv_deletes)" || true)"
+# Not one request in the whole path spells either shipped name. Neither string
+# is a substring of any name this board resolves — needs-human, needs-triage,
+# queued, claimed, blocked, post-merge, epic — so a bare match is the assertion
+# and needs no word boundary to be exact.
+t drill-board-vocab-moved-mints-no-shipped-name 0 \
+  "$(grep -cE 'attention|ready' "$BV_TRACE" || true)"
+
+# (b) EVERY WAIT AND PREDICATE MATCHES THE MOVED NAME. Each is driven twice:
+# once against a board carrying the moved name and once against a board
+# carrying only the shipped one. A predicate still spelling `attention` or
+# `ready` answers both the same way, which is the shape that reds here.
+#
+# The JSON the two swap reads are graded on lives out here, in variables the
+# drive's subshell inherits: a `'`-quoted snippet cannot carry a `'` of its own
+# and a here-string built inside it would be this fixture writing the board
+# rather than reading it.
+# shellcheck disable=SC2034  # read inside bv_drive's eval'd snippet
+BV_JSON_MOVED='{"labels":[{"name":"queued"}]}'
+# shellcheck disable=SC2034  # read inside bv_drive's eval'd snippet
+BV_JSON_SHIPPED='{"labels":[{"name":"ready"}]}'
+# shellcheck disable=SC2034  # read inside bv_drive's eval'd snippet
+BV_JSON_HALF='{"labels":[{"name":"queued"},{"name":"claimed"}]}'
+bv_board_put 200 needs-human           # still flagged under the moved name
+bv_board_put 201 attention             # flagged under a name nobody moved to
+bv_board_put 202 queued                # the builder's issue, not yet claimed
+bv_board_put 203 ready                 # ...the shipped name, on a moved board
+bv_board_put 204 post-merge            # the terminal fixture, untouched
+bv_board_put 205 queued,needs-human    # ruled into the moved queue
+bv_board_put 206 ready                 # ruled into the SHIPPED queue name
+bv_board_put 207 post-merge,epic       # a label the session added
+# shellcheck disable=SC2016  # the snippet is eval'd by bv_drive, which is where it expands
+BV_PRED="$(bv_drive '
+  rehearsal_attention_flag_cleared owner/repo 200 && echo cleared-200 || echo armed-200
+  rehearsal_attention_flag_cleared owner/repo 201 && echo cleared-201 || echo armed-201
+  rehearsal_builder_left_the_queue owner/repo 202 && echo off-202 || echo on-202
+  rehearsal_builder_left_the_queue owner/repo 203 && echo off-203 || echo on-203
+  rehearsal_post_merge_labels_intact owner/repo 204 post-merge && echo intact-204 || echo moved-204
+  rehearsal_post_merge_labels_intact owner/repo 207 post-merge && echo intact-207 || echo moved-207
+  rehearsal_load_installed_queue_labels
+  echo "QUEUESET=$(paste -sd, - <<<"$REHEARSAL_QUEUE_LABELS")"
+  rehearsal_stray_left_the_queue owner/repo 205 && echo ruled-205 || echo stray-205
+  rehearsal_stray_left_the_queue owner/repo 206 && echo ruled-206 || echo stray-206
+  rehearsal_attention_is_ready_from_json "$BV_JSON_MOVED" >/dev/null \
+    && echo swapped-moved || echo unswapped-moved
+  rehearsal_attention_is_ready_from_json "$BV_JSON_SHIPPED" >/dev/null \
+    && echo swapped-shipped || echo unswapped-shipped
+  rehearsal_attention_is_ready_from_json "$BV_JSON_HALF" >/dev/null \
+    && echo swapped-half || echo unswapped-half
+')"
+t drill-board-vocab-flag-armed-under-moved-name 1 "$(grep -cx armed-200 <<<"$BV_PRED" || true)"
+t drill-board-vocab-flag-clear-ignores-shipped-name 1 "$(grep -cx cleared-201 <<<"$BV_PRED" || true)"
+t drill-board-vocab-queue-holds-under-moved-name 1 "$(grep -cx on-202 <<<"$BV_PRED" || true)"
+t drill-board-vocab-queue-off-ignores-shipped-name 1 "$(grep -cx off-203 <<<"$BV_PRED" || true)"
+t drill-board-vocab-post-merge-intact 1 "$(grep -cx intact-204 <<<"$BV_PRED" || true)"
+t drill-board-vocab-post-merge-touched-reds 1 "$(grep -cx moved-207 <<<"$BV_PRED" || true)"
+t drill-board-vocab-ready-swap-reads-moved-name 1 "$(grep -cx swapped-moved <<<"$BV_PRED" || true)"
+t drill-board-vocab-ready-swap-ignores-shipped-name 1 "$(grep -cx unswapped-shipped <<<"$BV_PRED" || true)"
+# ...and the swap is a SWAP: the moved ready set with claimed still standing is
+# not a release, which is the half that reads the claimed name.
+t drill-board-vocab-ready-swap-needs-claimed-gone 1 "$(grep -cx unswapped-half <<<"$BV_PRED" || true)"
+
+# The other two names a fixture sends, on a board that moved THEM: `post-merge`
+# is minted and read back by the triage terminal fixture, and `claimed` is half
+# of both the attention leg's demand and the swap above. Moving LABEL_ATTENTION
+# and LABEL_READY leaves those two sites passing under the shipped names by
+# coincidence, so they get a board of their own.
+bv_box_conf 'LABEL_POST_MERGE="landed"' 'LABEL_CLAIMED="wip"'
+bv_board_put 208 landed
+bv_board_put 209 post-merge
+# shellcheck disable=SC2016  # the snippet is eval'd by bv_drive, which is where it expands
+BV_PM="$(bv_drive '
+  rehearsal_mint_post_merge_fixture owner/repo t b >/dev/null
+  rehearsal_attention_file_fixture owner/repo box-identity t b
+  rehearsal_post_merge_labels_intact owner/repo 208 landed && echo intact-208 || echo moved-208
+  rehearsal_post_merge_labels_intact owner/repo 209 post-merge && echo intact-209 || echo moved-209
+')"
+t drill-board-vocab-moved-post-merge-mint 1 "$(bv_minted landed)"
+t drill-board-vocab-moved-claimed-mint 1 "$(bv_minted wip,attention)"
+t drill-board-vocab-moved-post-merge-intact 1 "$(grep -cx intact-208 <<<"$BV_PM" || true)"
+t drill-board-vocab-moved-post-merge-shipped-name-reds 1 "$(grep -cx moved-209 <<<"$BV_PM" || true)"
+
+# (c) THE RESOLVED QUEUE SET CARRIES THE MOVED `ready`, and the stray assertion
+# grades against it: an issue ruled into `queued` has left the unlabelled
+# queue, and one carrying the shipped `ready` on this board has not.
+t drill-board-vocab-queue-labels-resolve-six 1 \
+  "$(grep -c '^ok triage: installed queue-label set resolves six names$' <<<"$BV_PRED" || true)"
+t drill-board-vocab-queue-set-carries-moved-ready 1 \
+  "$(grep -cxF 'QUEUESET=blocked,claimed,epic,needs-triage,post-merge,queued' <<<"$BV_PRED" || true)"
+t drill-board-vocab-stray-ruled-into-moved-queue 1 "$(grep -cx ruled-205 <<<"$BV_PRED" || true)"
+t drill-board-vocab-stray-shipped-name-is-still-stray 1 "$(grep -cx stray-206 <<<"$BV_PRED" || true)"
+
+# ...and a fleet.conf that COLLIDES two names onto one string resolves five
+# through `sort -u` and must red exactly as it does today (D2). The row text is
+# the same row text.
+bv_box_conf 'LABEL_READY="blocked"'
+BV_COLLIDED="$(bv_drive 'rehearsal_load_installed_queue_labels')"
+t drill-board-vocab-collided-queue-set-reds 1 \
+  "$(grep -c '^FAIL triage: installed queue-label set resolves six names$' <<<"$BV_COLLIDED" || true)"
+
+# (d) A BOX WITH NO fleet.conf MINTS AND MATCHES THE SHIPPED NAMES, exactly as
+# today. This is the configuration the defect is invisible under — every round
+# to date ran on it — so it is here as the non-regression half and never as
+# evidence for the rest.
+bv_box_conf
+bv_drive "$BV_PHASE2" >/dev/null   # driven for its trace, like the moved board
+t drill-board-vocab-shipped-mint-names 1 \
+  "$(grep -c '^attention:d93f0b needs-triage:fbca04 ready:0e8a16 claimed:1d76db blocked:b60205 post-merge:006b75 epic:5319e7$' <<<"$(bv_vocab)" || true)"
+t drill-board-vocab-shipped-fixture-labels 1 \
+  "$(grep -c '^attention post-merge ready claimed,attention attention,blocked$' <<<"$(bv_mints)" || true)"
+t drill-board-vocab-shipped-cleanup-deletes 1 \
+  "$(grep -c '^attention$' <<<"$(bv_deletes)" || true)"
+bv_board_put 300 ready
+# shellcheck disable=SC2016  # the snippet is eval'd by bv_drive, which is where it expands
+BV_SHIPPED_PRED="$(bv_drive '
+  rehearsal_builder_left_the_queue owner/repo 300 && echo off-300 || echo on-300
+  rehearsal_load_installed_queue_labels >/dev/null
+  echo "QUEUESET=$(paste -sd, - <<<"$REHEARSAL_QUEUE_LABELS")"
+')"
+t drill-board-vocab-shipped-queue-holds 1 "$(grep -cx on-300 <<<"$BV_SHIPPED_PRED" || true)"
+t drill-board-vocab-shipped-queue-set 1 \
+  "$(grep -cxF 'QUEUESET=blocked,claimed,epic,needs-triage,post-merge,ready' <<<"$BV_SHIPPED_PRED" || true)"
+
+# ...and a box whose configuration resolves no usable name REFUSES, like the
+# census's own read and for the same reason: a vocabulary half-minted under
+# names nothing resolved is a fixture fault every row below would be blamed
+# for. Both shapes — an empty name and one carrying whitespace GitHub would
+# accept but every `grep -qx` downstream would have to agree about.
+bv_box_conf 'LABEL_EPIC=""'
+t drill-board-vocab-empty-name-refuses 1 \
+  "$(grep -c '^LOAD-RC=1$' <<<"$(bv_drive 'echo unreachable')" || true)"
+bv_box_conf 'LABEL_CLAIMED="in progress"'
+t drill-board-vocab-whitespace-name-refuses 1 \
+  "$(grep -c '^LOAD-RC=1$' <<<"$(bv_drive 'echo unreachable')" || true)"
+# The refusal NAMES the label it read, so a red is diagnosable off the console
+# rather than from the source of the read.
+t drill-board-vocab-refusal-names-the-label 1 \
+  "$(grep -c '^REASON=.*LABEL_CLAIMED (whitespace)$' <<<"$(bv_drive 'echo unreachable')" || true)"
+# A box that will not answer at all is the third state, and it refuses too
+# rather than minting a board of empty names.
+BV_HOME="$TMP/bv-no-such-box"
+t drill-board-vocab-unreadable-box-refuses 1 \
+  "$(grep -c '^LOAD-RC=1$' <<<"$(bv_drive 'echo unreachable')" || true)"
+BV_HOME="$TMP/bv-box"
+
+# (e) THE RESOLVED NAME IS DATA, never a pattern and never jq source.
+#
+# Groups (a)-(d) move each name onto another plain English word, which is the
+# realistic rename and the one the spec names. It is not the only one an
+# operator can write: GitHub accepts `.`, `+`, `|` and `"` in a label name, and
+# every one of them means something to a regular expression or to a jq filter. A
+# predicate that interpolates a resolved name into either grades the operator's
+# DATA as CODE — and then answers about a board it never matched, which is this
+# issue's own defect pointed the other way rather than a separate one.
+#
+# So each shape is driven against the near-match it used to accept. The needles
+# here are `grep -cxF`, because they carry metacharacters themselves.
+
+# (e1) `.` is an ERE wildcard and `"` ends a jq string literal. One board
+# carries both, plus a `+` in the third name a fixture sends.
+bv_box_conf 'LABEL_READY="ready.v2"' "LABEL_ATTENTION='needs\"human'" "LABEL_CLAIMED='claimed+1'"
+bv_drive "$BV_PHASE2" >/dev/null
+t drill-board-vocab-meta-mint-names 1 \
+  "$(grep -cxF 'needs"human:d93f0b needs-triage:fbca04 ready.v2:0e8a16 claimed+1:1d76db blocked:b60205 post-merge:006b75 epic:5319e7' <<<"$(bv_vocab)" || true)"
+t drill-board-vocab-meta-fixture-labels 1 \
+  "$(grep -cxF 'needs"human post-merge ready.v2 claimed+1,needs"human needs"human,blocked' <<<"$(bv_mints)" || true)"
+bv_board_put 400 readyXv2        # the near-match the ERE wildcard used to accept
+bv_board_put 401 ready.v2        # ...and the name the box actually resolved
+bv_board_put 402 'needs"human'   # flagged, under a name that is not a jq string
+bv_board_put 403 attention       # ...and the shipped name, on this board
+# shellcheck disable=SC2016  # the snippet is eval'd by bv_drive, which is where it expands
+BV_META="$(bv_drive '
+  rehearsal_load_installed_queue_labels >/dev/null
+  echo "QUEUESET=$(paste -sd, - <<<"$REHEARSAL_QUEUE_LABELS")"
+  rehearsal_stray_left_the_queue owner/repo 400 && echo ruled-400 || echo stray-400
+  rehearsal_stray_left_the_queue owner/repo 401 && echo ruled-401 || echo stray-401
+  rehearsal_attention_flag_cleared owner/repo 402 && echo cleared-402 || echo armed-402
+  rehearsal_attention_flag_cleared owner/repo 403 && echo cleared-403 || echo armed-403
+  rehearsal_builder_left_the_queue owner/repo 400 && echo off-400 || echo on-400
+  rehearsal_builder_left_the_queue owner/repo 401 && echo off-401 || echo on-401
+')"
+t drill-board-vocab-meta-queue-set-carries-the-dotted-ready 1 \
+  "$(grep -cxF 'QUEUESET=blocked,claimed+1,epic,needs-triage,post-merge,ready.v2' <<<"$BV_META" || true)"
+# THE ROW THE WILDCARD FAILS: `readyXv2` is not a label this board has, so the
+# issue carrying it has not left the unlabelled queue. Joined into an ERE, it
+# did.
+t drill-board-vocab-meta-near-match-is-still-stray 1 "$(grep -cx stray-400 <<<"$BV_META" || true)"
+t drill-board-vocab-meta-exact-name-is-ruled 1 "$(grep -cx ruled-401 <<<"$BV_META" || true)"
+# ...and the jq half: the filter has to COMPILE against a quote-bearing name
+# before it can grade anything. Interpolated, it does not, and the predicate
+# then answers "still armed" about every board — including this one, which is
+# why the cleared row is the one that dies and the armed row is not.
+t drill-board-vocab-meta-quote-name-armed 1 "$(grep -cx armed-402 <<<"$BV_META" || true)"
+t drill-board-vocab-meta-quote-name-clear-ignores-shipped 1 \
+  "$(grep -cx cleared-403 <<<"$BV_META" || true)"
+t drill-board-vocab-meta-builder-queue-holds 1 "$(grep -cx on-401 <<<"$BV_META" || true)"
+t drill-board-vocab-meta-builder-near-match-left 1 "$(grep -cx off-400 <<<"$BV_META" || true)"
+
+# (e2) `|` is the join character itself, so a name carrying one re-partitions
+# the alternation and each fragment becomes a queue name the board does not
+# have. The same value carries the `"` that breaks the builder read's filter, so
+# one board drives both predicates against it.
+bv_box_conf "LABEL_READY='queued|ready\"x'"
+bv_board_put 410 queued            # a FRAGMENT of the resolved name, not a name
+bv_board_put 411 'queued|ready"x'  # ...the whole resolved name
+# shellcheck disable=SC2016  # the snippet is eval'd by bv_drive, which is where it expands
+BV_META_ALT="$(bv_drive '
+  rehearsal_load_installed_queue_labels
+  rehearsal_stray_left_the_queue owner/repo 410 && echo ruled-410 || echo stray-410
+  rehearsal_stray_left_the_queue owner/repo 411 && echo ruled-411 || echo stray-411
+  rehearsal_builder_left_the_queue owner/repo 410 && echo off-410 || echo on-410
+  rehearsal_builder_left_the_queue owner/repo 411 && echo off-411 || echo on-411
+')"
+# Six names still resolve: a `|` inside one of them is one name, not two.
+t drill-board-vocab-meta-alternation-resolves-six 1 \
+  "$(grep -c '^ok triage: installed queue-label set resolves six names$' <<<"$BV_META_ALT" || true)"
+t drill-board-vocab-meta-alternation-fragment-is-stray 1 \
+  "$(grep -cx stray-410 <<<"$BV_META_ALT" || true)"
+t drill-board-vocab-meta-alternation-whole-name-is-ruled 1 \
+  "$(grep -cx ruled-411 <<<"$BV_META_ALT" || true)"
+t drill-board-vocab-meta-quote-ready-off-the-queue 1 "$(grep -cx off-410 <<<"$BV_META_ALT" || true)"
+t drill-board-vocab-meta-quote-ready-holds 1 "$(grep -cx on-411 <<<"$BV_META_ALT" || true)"
+
+# (e3) A NAME CARRYING A NEWLINE is the shape emptiness cannot catch. Eight
+# emitted lines fill seven slots, so every slot below it is one place out and
+# the LAST value is dropped — leaving all seven non-empty, which is the one
+# state the whitespace guard never sees. The box's terminator is what catches
+# it, and the refusal says which shape it was. Two fleet.conf LINES, because
+# that is how a newline gets into a sourced value.
+bv_box_conf 'LABEL_READY="que' 'ued"'
+t drill-board-vocab-newline-name-refuses 1 \
+  "$(grep -c '^LOAD-RC=1$' <<<"$(bv_drive 'echo unreachable')" || true)"
+t drill-board-vocab-newline-refusal-names-the-shift 1 \
+  "$(grep -c '^REASON=.*seven names in seven lines.*one place out$' <<<"$(bv_drive 'echo unreachable')" || true)"
+
+# (e4) AND EVERY PREDICATE GRADED ON A NAME GUARDS AN UNRESOLVED ONE, rc 2.
+# `index("") == null` is true, so a predicate holding an empty name would report
+# the flag cleared, the queue left and the swap done — green on every correct
+# engine, for the reason the swap read's own comment gives. Unreachable in the
+# shipped tree, where the read refuses above the first mint and every caller is
+# below it; driven here because that is the only thing that makes it stay true.
+bv_box_conf
+bv_board_put 420 attention
+# shellcheck disable=SC2016  # the snippet is eval'd by bv_drive, which is where it expands
+BV_UNRESOLVED="$(bv_drive '
+  REHEARSAL_LABEL_ATTENTION=""
+  REHEARSAL_LABEL_READY=""
+  REHEARSAL_LABEL_CLAIMED=""
+  rehearsal_attention_flag_cleared owner/repo 420; echo "flag-rc=$?"
+  rehearsal_builder_left_the_queue owner/repo 420; echo "queue-rc=$?"
+  swap_out="$(rehearsal_attention_is_ready_from_json "$BV_JSON_MOVED")"; echo "swap-rc=$?"
+  echo "swap-out=$swap_out"
+')"
+t drill-board-vocab-unresolved-flag-returns-2 1 "$(grep -cx 'flag-rc=2' <<<"$BV_UNRESOLVED" || true)"
+t drill-board-vocab-unresolved-queue-returns-2 1 "$(grep -cx 'queue-rc=2' <<<"$BV_UNRESOLVED" || true)"
+t drill-board-vocab-unresolved-swap-returns-2 1 "$(grep -cx 'swap-rc=2' <<<"$BV_UNRESOLVED" || true)"
+t drill-board-vocab-unresolved-swap-names-the-gap 1 \
+  "$(grep -cxF 'swap-out=<no effective ready/claimed name resolved off the box>' <<<"$BV_UNRESOLVED" || true)"
+
+# (e5) A NAME BEGINNING WITH `-` IS STILL DATA, and the resolved set is an
+# OPERAND. Groups (e1) and (e2) cover the name read as a PATTERN; this one
+# covers it read as an OPTION, which is the same class one layer further out and
+# the one the loader cannot help with — `-alert` is non-empty and
+# whitespace-free, so it is a name the read must accept.
+#
+# A leading hyphen sorts the name to the front of the set, so the operand
+# `grep -qxF` receives begins with `-`. WHICH FAILURE FOLLOWS DEPENDS ONLY ON
+# THE LETTERS, so both are driven: (e5a) is the silent one and (e5b) is the loud
+# one.
+#
+# THE COLLATION IS THE FIXTURE'S PREMISE, AND IS ASSERTED RATHER THAN ASSUMED.
+# `sort -u` runs host-side in the host's locale, and a UTF-8 collation ignores
+# punctuation at the first level: `-queued` collates as `queued` and lands LAST,
+# where under LC_ALL=C it lands first. A row written on `-queued` would
+# therefore pass on one host for the wrong reason and catch the defect on
+# another. `-alert` and `-active` sort first under BOTH — `-` before letters in
+# C, `alert`/`active` before `blocked` in a UTF-8 locale — and the
+# `…-sorts-first` rows below pin exactly that, so a collation that ever moves
+# them reds with the reason rather than quietly disarming the group.
+
+# (e5a) THE SILENT ONE. `-alert` parses as the bundle `-a -l -e`, and `-e` takes
+# the REST of the operand — newlines and all — as its pattern argument, so the
+# patterns actually compared are `rt`, `blocked`, `claimed`, `epic`,
+# `needs-triage`, `post-merge`. The exact name reads STRAY and the fragment `rt`
+# reads RULED, on a board that carries neither.
+bv_box_conf 'LABEL_READY="-alert"'
+bv_drive "$BV_PHASE2" >/dev/null
+t drill-board-vocab-dash-mint-names 1 \
+  "$(grep -cxF 'attention:d93f0b needs-triage:fbca04 -alert:0e8a16 claimed:1d76db blocked:b60205 post-merge:006b75 epic:5319e7' <<<"$(bv_vocab)" || true)"
+t drill-board-vocab-dash-fixture-labels 1 \
+  "$(grep -cxF 'attention post-merge -alert claimed,attention attention,blocked' <<<"$(bv_mints)" || true)"
+bv_board_put 430 '-alert'  # the exact name the box resolved
+bv_board_put 431 rt        # the `-e` argument fragment, which is no name at all
+bv_board_put 432 alert     # the dash-less near-miss
+bv_board_put 433 blocked   # ...and an ordinary name, unrelated to the hyphen
+# shellcheck disable=SC2016  # the snippet is eval'd by bv_drive, which is where it expands
+BV_DASH="$(bv_drive '
+  rehearsal_load_installed_queue_labels >/dev/null
+  echo "FIRST=$(head -1 <<<"$REHEARSAL_QUEUE_LABELS")"
+  echo "QUEUESET=$(paste -sd, - <<<"$REHEARSAL_QUEUE_LABELS")"
+  rehearsal_stray_left_the_queue owner/repo 430 && echo ruled-430 || echo stray-430
+  rehearsal_stray_left_the_queue owner/repo 431 && echo ruled-431 || echo stray-431
+  rehearsal_stray_left_the_queue owner/repo 432 && echo ruled-432 || echo stray-432
+  rehearsal_stray_left_the_queue owner/repo 433 && echo ruled-433 || echo stray-433
+  rehearsal_builder_left_the_queue owner/repo 430 && echo off-430 || echo on-430
+  rehearsal_builder_left_the_queue owner/repo 432 && echo off-432 || echo on-432
+')"
+t drill-board-vocab-dash-name-sorts-first 1 "$(grep -c '^FIRST=-' <<<"$BV_DASH" || true)"
+t drill-board-vocab-dash-queue-set-carries-the-hyphen 1 \
+  "$(grep -cxF 'QUEUESET=-alert,blocked,claimed,epic,needs-triage,post-merge' <<<"$BV_DASH" || true)"
+# THE TWO ROWS THE OPTION BUNDLE FAILS.
+t drill-board-vocab-dash-exact-name-is-ruled 1 "$(grep -cx ruled-430 <<<"$BV_DASH" || true)"
+t drill-board-vocab-dash-fragment-is-stray 1 "$(grep -cx stray-431 <<<"$BV_DASH" || true)"
+# ...and the two that hold either way, so the fix is shown not to have bought
+# them by matching more loosely: the dash-less near-miss is not this board's
+# `ready`, and an ordinary queue name is still ruled.
+t drill-board-vocab-dash-near-miss-is-stray 1 "$(grep -cx stray-432 <<<"$BV_DASH" || true)"
+t drill-board-vocab-dash-ordinary-name-is-ruled 1 "$(grep -cx ruled-433 <<<"$BV_DASH" || true)"
+# The builder read takes the same name through `jq --arg`, where an operand
+# never forms. Driven to show the two halves agree about this board.
+t drill-board-vocab-dash-builder-queue-holds 1 "$(grep -cx on-430 <<<"$BV_DASH" || true)"
+t drill-board-vocab-dash-builder-near-miss-left 1 "$(grep -cx off-432 <<<"$BV_DASH" || true)"
+
+# (e5b) THE LOUD ONE. `-active` reaches `-t`, which is no grep option at all, so
+# grep exits 2 with a usage message and EVERY issue reads stray — including one
+# carrying a name the board plainly has. stderr is dropped on this drive alone,
+# because the pre-fix shape writes grep's usage text to it and a mutation probe
+# should print its rows and not a manual page.
+bv_box_conf 'LABEL_READY="-active"'
+bv_board_put 440 '-active'
+bv_board_put 441 blocked
+# shellcheck disable=SC2016  # the snippet is eval'd by bv_drive, which is where it expands
+BV_DASH_LOUD="$(bv_drive '
+  rehearsal_load_installed_queue_labels >/dev/null
+  echo "FIRST=$(head -1 <<<"$REHEARSAL_QUEUE_LABELS")"
+  rehearsal_stray_left_the_queue owner/repo 440 && echo ruled-440 || echo stray-440
+  rehearsal_stray_left_the_queue owner/repo 441 && echo ruled-441 || echo stray-441
+' 2>/dev/null)"
+t drill-board-vocab-dash-invalid-option-name-sorts-first 1 \
+  "$(grep -c '^FIRST=-' <<<"$BV_DASH_LOUD" || true)"
+t drill-board-vocab-dash-invalid-option-exact-is-ruled 1 \
+  "$(grep -cx ruled-440 <<<"$BV_DASH_LOUD" || true)"
+t drill-board-vocab-dash-invalid-option-spares-the-rest 1 \
+  "$(grep -cx ruled-441 <<<"$BV_DASH_LOUD" || true)"
+
+# (e6) THE CR THE READ REPAIRS IS THE TRANSPORT'S, AND ONLY THAT ONE. The box's
+# stdout comes back through a channel that may translate line endings, so a CR
+# at END OF LINE is the transport and is stripped. A CR anywhere else is a byte
+# inside the operator's value, and the read has no business removing it: it is
+# exactly the name no `-f "labels[]=…"` or jq needle downstream could agree
+# about, which is the whitespace guard's own reason for existing. Stripped
+# wholesale, the guard never sees it and the board mints under a name the
+# operator did not write.
+BV_CRLF=1
+bv_box_conf 'LABEL_ATTENTION="needs-human"' 'LABEL_READY="queued"'
+bv_drive "$BV_PHASE2" >/dev/null
+t drill-board-vocab-crlf-box-mints-the-moved-names 1 \
+  "$(grep -cxF 'needs-human:d93f0b needs-triage:fbca04 queued:0e8a16 claimed:1d76db blocked:b60205 post-merge:006b75 epic:5319e7' <<<"$(bv_vocab)" || true)"
+# The queue set too, which had no strip at all before this round: it was only
+# counted, and six names each ending in CR count as six.
+# shellcheck disable=SC2016  # the snippet is eval'd by bv_drive, which is where it expands
+BV_CRLF_SET="$(bv_drive '
+  rehearsal_load_installed_queue_labels
+  echo "QUEUESET=$(paste -sd, - <<<"$REHEARSAL_QUEUE_LABELS")"
+')"
+t drill-board-vocab-crlf-queue-set-resolves-six 1 \
+  "$(grep -c '^ok triage: installed queue-label set resolves six names$' <<<"$BV_CRLF_SET" || true)"
+t drill-board-vocab-crlf-queue-set-carries-no-carriage-return 1 \
+  "$(grep -cxF 'QUEUESET=blocked,claimed,epic,needs-triage,post-merge,queued' <<<"$BV_CRLF_SET" || true)"
+# ...and the other side of the line: an INTERIOR CR is the operator's, survives
+# the strip, and is refused as whitespace like any other. A literal CR inside
+# the quoted value, because that is how one gets into a sourced string.
+BV_CRLF=0
+bv_box_conf "$(printf 'LABEL_READY="que\rued"')"
+t drill-board-vocab-interior-cr-refuses 1 \
+  "$(grep -c '^LOAD-RC=1$' <<<"$(bv_drive 'echo unreachable')" || true)"
+t drill-board-vocab-interior-cr-refusal-names-the-name 1 \
+  "$(grep -c '^REASON=.*LABEL_READY (whitespace)' <<<"$(bv_drive 'echo unreachable')" || true)"
+
 # --- the breaker leg grades only what it CONFIRMED (#724) --------------------
 #
 # The 0.1.3-rc2 round failed seven breaker assertions on `triage` and six on

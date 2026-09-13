@@ -452,8 +452,9 @@ rehearsal_attention_audit_file_fixtures() {
   # anybody.
   issue="$(gh api "repos/$repo/issues" \
     -f title="drill: attention audit unassigned $stamp" \
-    -f body="Drill fixture: this issue carries \`attention\` with no assignee, so the board audit can classify it UNASSIGNED. It is deliberately invisible to the assigned-demand wake. No action is required of a reader." \
-    -f "labels[]=attention" -f "labels[]=blocked" --jq .number)" || return 1
+    -f body="Drill fixture: this issue carries \`$REHEARSAL_LABEL_ATTENTION\` with no assignee, so the board audit can classify it UNASSIGNED. It is deliberately invisible to the assigned-demand wake. No action is required of a reader." \
+    -f "labels[]=$REHEARSAL_LABEL_ATTENTION" \
+    -f "labels[]=$REHEARSAL_LABEL_BLOCKED" --jq .number)" || return 1
   [ -n "$issue" ] || return 1
   rehearsal_attention_audit_register issue "$issue"
 
@@ -467,11 +468,12 @@ rehearsal_attention_audit_file_fixtures() {
     -f content="$(printf 'drill %s\n' "$stamp" | base64 -w0)" >/dev/null || return 1
   pr="$(gh api "repos/$repo/pulls" -f title="drill: attention audit $stamp" \
     -f head="$branch" -f base=main \
-    -f body="Drill fixture: this pull request carries \`attention\`, which belongs on the assigned issue that owns the claim. No action is required of a reader." \
+    -f body="Drill fixture: this pull request carries \`$REHEARSAL_LABEL_ATTENTION\`, which belongs on the assigned issue that owns the claim. No action is required of a reader." \
     --jq .number)" || return 1
   [ -n "$pr" ] || return 1
   rehearsal_attention_audit_register pr "$pr"
-  gh api "repos/$repo/issues/$pr/labels" -f "labels[]=attention" >/dev/null || return 1
+  gh api "repos/$repo/issues/$pr/labels" \
+    -f "labels[]=$REHEARSAL_LABEL_ATTENTION" >/dev/null || return 1
   return 0
 }
 
@@ -480,7 +482,14 @@ rehearsal_attention_audit_clear_flags() {
   [ -n "$repo" ] || return 0
   for num in "${REHEARSAL_ATTENTION_AUDIT_PR:-}" "${REHEARSAL_ATTENTION_AUDIT_ISSUE:-}"; do
     [ -n "$num" ] || continue
-    gh api -X DELETE "repos/$repo/issues/$num/labels/attention" >/dev/null 2>&1 || true
+    # The name this leg SET, which is the box's own effective one: a DELETE
+    # spelling the shipped `attention` on a renamed fleet 404s quietly and
+    # leaves both malformed shapes standing on the board. The shipped name
+    # stays the fallback for the EXIT-trap path, which can be reached before
+    # the board read resolved anything — see rehearsal_attention_cleanup.
+    gh api -X DELETE \
+      "repos/$repo/issues/$num/labels/${REHEARSAL_LABEL_ATTENTION:-attention}" \
+      >/dev/null 2>&1 || true
   done
   return 0
 }

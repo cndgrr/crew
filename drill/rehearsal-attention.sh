@@ -119,12 +119,26 @@ rehearsal_attention_assignees_from_json() {
 
 # ready is set and claimed is gone: the swap, not merely the addition. A
 # session that added ready and left claimed standing has not released anything.
+#
+# Both names are the BOX's, resolved by rehearsal_load_installed_board_labels
+# before phase 2 mints anything (#735). They are arguments with a global
+# default rather than literals so the pair can be driven directly, and an
+# unresolved one returns 2 rather than matching `index("")`: a swap graded
+# against a name nothing on the board carries is red on every correct engine,
+# and a swap graded against a name nothing WRITES would be green on every one.
 rehearsal_attention_is_ready_from_json() {
   local issue_json="$1" labels
+  local ready="${2:-${REHEARSAL_LABEL_READY:-}}"
+  local claimed="${3:-${REHEARSAL_LABEL_CLAIMED:-}}"
+  if [ -z "$ready" ] || [ -z "$claimed" ]; then
+    printf '%s\n' "<no effective ready/claimed name resolved off the box>"
+    return 2
+  fi
   labels="$(rehearsal_attention_labels_from_json "$issue_json")" || return 2
   printf '%s\n' "${labels:-<no labels>}"
-  jq -e '([.labels[].name] | index("ready")) != null
-    and ([.labels[].name] | index("claimed")) == null' \
+  jq -e --arg ready "$ready" --arg claimed "$claimed" \
+    '([.labels[].name] | index($ready)) != null
+    and ([.labels[].name] | index($claimed)) == null' \
     >/dev/null <<<"$issue_json"
 }
 
@@ -431,16 +445,23 @@ rehearsal_attention_file_fixture() {
   local repo="$1" identity="$2" title="$3" body="$4" num
   REHEARSAL_ATTENTION_NUM=""
   num="$(gh api "repos/$repo/issues" -f title="$title" -f body="$body" \
-    -f "assignees[]=$identity" -f "labels[]=claimed" -f "labels[]=attention" \
+    -f "assignees[]=$identity" \
+    -f "labels[]=$REHEARSAL_LABEL_CLAIMED" \
+    -f "labels[]=$REHEARSAL_LABEL_ATTENTION" \
     --jq .number)" || return 1
   [ -n "$num" ] || return 1
   rehearsal_attention_register_fixture "$repo" "$num"
   REHEARSAL_ATTENTION_NUM="$num"
 }
 
+# The DELETE disarms the demand this leg armed, so it names the label the leg
+# actually SET — the box's own effective one. A cleanup spelling the shipped
+# `attention` on a renamed fleet 404s quietly and leaves the fixture live for
+# the next tick to pick up.
 rehearsal_attention_close_fixture() {
   local repo="$1" num="$2"
-  gh api -X DELETE "repos/$repo/issues/$num/labels/attention" >/dev/null 2>&1 || true
+  gh api -X DELETE "repos/$repo/issues/$num/labels/$REHEARSAL_LABEL_ATTENTION" \
+    >/dev/null 2>&1 || true
   gh api -X PATCH "repos/$repo/issues/$num" -f state=closed >/dev/null 2>&1
 }
 
@@ -741,7 +762,14 @@ rehearsal_attention_cleanup() {
   local repo="${REHEARSAL_ATTENTION_REPO:-}" num
   [ -n "$repo" ] && [ -n "${REHEARSAL_ATTENTION_ISSUES:-}" ] || return 0
   for num in $REHEARSAL_ATTENTION_ISSUES; do
-    gh api -X DELETE "repos/$repo/issues/$num/labels/attention" \
+    # The name this leg actually armed, which is the box's own effective one.
+    # `attention` stays the fallback for a cleanup reached through
+    # rehearsal.sh's EXIT trap before the board read resolved anything — every
+    # refusal above the mint takes that path — because a DELETE to
+    # `…/labels/` with an empty name disarms nothing at all. Same reasoning,
+    # same shape as rehearsal-breaker.sh's own cleanup.
+    gh api -X DELETE \
+      "repos/$repo/issues/$num/labels/${REHEARSAL_LABEL_ATTENTION:-attention}" \
       >/dev/null 2>&1 || true
     gh api -X PATCH "repos/$repo/issues/$num" -f state=closed \
       >/dev/null 2>&1 || true
