@@ -60,7 +60,20 @@ rehearsal_load_installed_board_labels() {
              printf "%s\n" "$LABEL_ATTENTION" "$LABEL_NEEDS_TRIAGE" \
                "$LABEL_READY" "$LABEL_CLAIMED" "$LABEL_BLOCKED" \
                "$LABEL_POST_MERGE" "$LABEL_EPIC" '"'$sentinel'"
-  conf="$(bx "$read_conf" | tr -d '\r')" || conf=""
+  # `s/\r$//` and not the drill's usual `tr -d '\r'`, at this one site. The CR
+  # this read has to survive is the TRANSPORT's: bx hands the box's stdout back
+  # through a channel that may translate line endings, and a CR sitting at the
+  # end of a line is that translation. A CR ANYWHERE ELSE is a byte inside the
+  # operator's value, and stripping it is the one place this read would guess on
+  # the operator's behalf — the elsewhere-identical `tr -d '\r'` sites feed
+  # values the drill prints or compares, where this one feeds a value the guard
+  # below REFUSES for carrying whitespace. So the interior CR is left in, and
+  # `*[[:space:]]*` declines it by the same rule as a space or a tab.
+  #
+  # One case stays irreducible: a name whose LAST byte is a CR arrives as
+  # `value\r\n`, byte-identical to a transport-translated `value\n`, and is read
+  # as `value`. Nothing at this layer can tell those apart.
+  conf="$(bx "$read_conf" | sed 's/\r$//')" || conf=""
   {
     IFS= read -r REHEARSAL_LABEL_ATTENTION
     IFS= read -r REHEARSAL_LABEL_NEEDS_TRIAGE
@@ -164,6 +177,20 @@ rehearsal_load_installed_queue_labels() {
 # becomes a queue name the board does not have. `-F` takes each line as a fixed
 # string and `-x` anchors it whole, so the comparison is the one D1 asks for.
 #
+# And `--` before it, because the SET is still an OPERAND, and an operand is the
+# third place a resolved name stops being data. A name beginning with `-` sorts
+# to the front of the set, so the operand begins with a hyphen and grep reads it
+# as an option bundle. Which of two failures follows depends only on the
+# letters: `LABEL_READY="-alert"` parses as `-a -l -e`, and `-e` then takes the
+# REST of the operand — newlines and all — as its pattern argument, so the
+# patterns compared are `rt`, `blocked`, `claimed`… The issue carrying the exact
+# `-alert` reads STRAY and one carrying the fragment `rt` reads RULED, silently,
+# on a board that has neither. `LABEL_READY="-active"` reaches `-t`, which is no
+# option at all, and grep exits 2 with a usage message: every issue reads stray.
+# The loader cannot catch either — both names are non-empty and whitespace-free,
+# so both are names it must accept. `--` ends the option list and the set goes
+# back to being the operand it always was.
+#
 # A here-string and not a pipe into `grep -q`: `grep -q` exits on its first
 # match and the producer takes SIGPIPE, which under `set -o pipefail` makes the
 # whole command red at random (#449). The guard in shared/test/common.sh reds on
@@ -178,7 +205,7 @@ rehearsal_stray_left_the_queue() {
   local repo="$1" num="$2" queue_names
   [ -n "$REHEARSAL_QUEUE_LABELS" ] || return 1
   queue_names="$(gh api "repos/$repo/issues/$num" --jq '.labels[].name')" || return 1
-  grep -qxF "$REHEARSAL_QUEUE_LABELS" <<<"$queue_names"
+  grep -qxF -- "$REHEARSAL_QUEUE_LABELS" <<<"$queue_names"
 }
 
 rehearsal_load_installed_answer_mark() {
